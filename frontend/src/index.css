@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  @apply bg-terminal-bg text-gray-100 font-mono antialiased text-sm;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-terminal-bg;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-terminal-border rounded;
+}

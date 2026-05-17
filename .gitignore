@@ -1,0 +1,50 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# ML Models (too large for git)
+backend/models/*.pkl
+models/*.pkl
+
+# Environment variables
+.env
+.env.local
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Test/temp files
+*.tmp
+*.temp
+dashboard-*.png
+
+# Sample screenshots (optional - remove # if you dont want to push)
+# data/sample_screenshots/
