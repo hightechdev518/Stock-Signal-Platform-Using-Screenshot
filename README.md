@@ -23,6 +23,18 @@ AI-powered full-stack application that analyzes Webull and TradingView chart scr
 - **macOS**: `brew install tesseract`
 - **Linux**: `sudo apt install tesseract-ocr`
 
+## INSTALLATION
+
+1. Install Python 3.10+
+2. Install Node.js 18+
+3. Install Tesseract OCR from:
+   https://github.com/UB-Mannheim/tesseract/wiki
+4. Double-click `INSTALL.bat`
+5. Double-click `START.bat`
+6. Open http://127.0.0.1:3000
+
+For exact pinned Python dependencies (full venv snapshot), use `backend/requirements.txt`. For a minimal install list, use the root `requirements.txt`.
+
 ## Project Structure
 
 ```
@@ -49,6 +61,12 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
+```
+
+Or from the project root:
+
+```bash
+pip install -r ../requirements.txt
 ```
 
 ### Frontend

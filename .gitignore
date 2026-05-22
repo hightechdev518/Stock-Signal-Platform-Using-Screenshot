@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -11,12 +11,16 @@ build/
 
 # Virtual Environment
 venv/
+backend/python-runtime/
 env/
 .venv/
 
 # ML Models (too large for git)
 backend/models/*.pkl
 models/*.pkl
+
+# Bundled Tesseract binaries (~240MB) — run backend/scripts/bundle_tesseract.ps1 before PyInstaller build
+backend/tesseract/
 
 # Environment variables
 .env

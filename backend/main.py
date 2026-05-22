@@ -2,25 +2,34 @@
 FastAPI backend for Stock Signal Analysis Tool.
 """
 
-import io
+import asyncio
+import gc
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from pathlib import Path
+from datetime import datetime
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backtest import run_backtest
+from debug_logging import setup_debug_logging
 from ocr_parser import parse_screenshot
-from signal_engine import analyze
+from yfinance_setup import configure_yfinance_cache
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.pkl"
+setup_debug_logging()
+configure_yfinance_cache()
+
+from paths import model_path
+from signal_engine import analyze, analyze_live
+from market_hours import get_market_status
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure model exists; train on first run if missing
-    if not MODEL_PATH.exists():
+    if not model_path().exists():
         try:
             from train_model import train_and_save
 
@@ -45,6 +54,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+OCR_TIMEOUT_SEC = 30
+_ocr_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail
+    if not isinstance(detail, str):
+        detail = str(detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "detail": str(exc)},
+    )
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -62,9 +90,33 @@ class RetrainResponse(BaseModel):
 async def health():
     return HealthResponse(
         status="ok",
-        model_loaded=MODEL_PATH.exists(),
+        model_loaded=model_path().exists(),
         version="1.0.0",
     )
+
+
+@app.get("/market-status")
+async def market_status():
+    """US market session status using PC local time for display."""
+    return get_market_status()
+
+
+@app.get("/live/{ticker}")
+async def live_signal(ticker: str):
+    """
+    Fetch real-time price and recalculate BUY/SELL/HOLD from latest 1-minute bars.
+    Intended for polling every few seconds in Live Mode.
+    """
+    print(f"Live data fetched for {ticker} at {datetime.now()}")
+    try:
+        return analyze_live(ticker)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Live data unavailable for {ticker.upper()}. Detail: {str(e)}",
+        )
 
 
 @app.post("/analyze")
@@ -82,16 +134,31 @@ async def analyze_screenshot(file: UploadFile = File(...)):
         if len(contents) < 100:
             raise HTTPException(400, "Image file too small or empty")
 
-        ocr_data = parse_screenshot(contents)
+        loop = asyncio.get_running_loop()
+        try:
+            ocr_data = await asyncio.wait_for(
+                loop.run_in_executor(_ocr_executor, parse_screenshot, contents),
+                timeout=OCR_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                504,
+                f"OCR timed out after {OCR_TIMEOUT_SEC} seconds. Try a smaller or clearer image.",
+            )
+
         result = analyze(ocr_data)
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             422,
             f"Could not analyze screenshot. Ensure chart is readable. Detail: {str(e)}",
         )
+    finally:
+        gc.collect()
 
 
 @app.post("/retrain", response_model=RetrainResponse)
@@ -120,4 +187,4 @@ async def backtest_endpoint():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)

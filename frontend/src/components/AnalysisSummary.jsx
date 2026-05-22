@@ -76,43 +76,99 @@ function buildSummaryItems(result) {
     items.push({ type: isHigh ? 'warn' : 'ok', text: risk })
   }
 
+  // VWAP
+  const vwapSignal = String(ind.vwap_signal || '')
+  const vwap = ind.vwap ? `$${Number(ind.vwap).toFixed(2)}` : ''
+  if (vwapSignal === 'bullish') {
+    items.push({ type: 'ok', text: `Price above VWAP ${vwap} - institutional support` })
+  } else if (vwapSignal === 'bearish') {
+    items.push({ type: 'warn', text: `Price below VWAP ${vwap} - selling pressure` })
+  }
+
+  // ADX
+  const adxSignal = String(ind.adx_signal || '')
+  const trendStrength = String(ind.trend_strength || '')
+  const adxVal = ind.adx ? Number(ind.adx).toFixed(1) : null
+  if (adxVal) {
+    if (adxSignal === 'bullish' && trendStrength === 'strong') {
+      items.push({ type: 'ok', text: `ADX: ${adxVal} - Strong bullish trend confirmed` })
+    } else if (adxSignal === 'bearish' && trendStrength === 'strong') {
+      items.push({ type: 'warn', text: `ADX: ${adxVal} - Strong bearish trend confirmed` })
+    } else {
+      items.push({ type: 'warn', text: `ADX: ${adxVal} - Weak trend` })
+    }
+  }
+
+  // CCI
+  const cciSignal = String(ind.cci_signal || '')
+  const cciVal = ind.cci ? Number(ind.cci).toFixed(1) : null
+  if (cciVal) {
+    if (cciSignal === 'oversold') {
+      items.push({ type: 'ok', text: `CCI: ${cciVal} (oversold - potential reversal)` })
+    } else if (cciSignal === 'overbought') {
+      items.push({ type: 'warn', text: `CCI: ${cciVal} (overbought - potential pullback)` })
+    }
+  }
+
+  // Support / Resistance
+  const srSignal = String(ind.sr_signal || '')
+  const support = ind.support ? `$${Number(ind.support).toFixed(2)}` : ''
+  const resistance = ind.resistance ? `$${Number(ind.resistance).toFixed(2)}` : ''
+  if (srSignal === 'near_support') {
+    items.push({ type: 'ok', text: `Near key support ${support}` })
+  } else if (srSignal === 'near_resistance') {
+    items.push({ type: 'warn', text: `Near key resistance ${resistance}` })
+  }
+
+  // Pivot Points
+  const pivotBias = String(ind.pivot_bias || '')
+  const pivotSignal = String(ind.pivot_signal || '')
+  const pivotR1 = ind.pivot_r1 ?
+    `$${Number(ind.pivot_r1).toFixed(2)}` : ''
+  const pivotS1 = ind.pivot_s1 ?
+    `$${Number(ind.pivot_s1).toFixed(2)}` : ''
+
+  if (pivotBias === 'strong_bullish') {
+    items.push({ type: 'ok',
+      text: 'Price above R2 pivot — very strong bullish' })
+  } else if (pivotBias === 'bullish' &&
+             pivotSignal === 'above_r1') {
+    items.push({ type: 'ok',
+      text: `Price above R1 pivot ${pivotR1} — bullish` })
+  } else if (pivotBias === 'bullish') {
+    items.push({ type: 'ok',
+      text: 'Price above pivot point — bullish bias' })
+  } else if (pivotBias === 'strong_bearish') {
+    items.push({ type: 'warn',
+      text: 'Price below S2 pivot — very strong bearish' })
+  } else if (pivotBias === 'bearish' &&
+             pivotSignal === 'below_s1') {
+    items.push({ type: 'warn',
+      text: `Price below S1 pivot ${pivotS1} — bearish` })
+  } else if (pivotBias === 'bearish') {
+    items.push({ type: 'warn',
+      text: 'Price below pivot point — bearish bias' })
+  }
+
   return items
-}
-
-function buildConclusion(items, result) {
-  const bullish = items.filter((i) => i.type === 'ok').length
-  const warnings = items.filter((i) => i.type === 'warn').length
-  const signal = result.signal || 'HOLD'
-  const bias = signal === 'BUY' ? 'BULLISH' : signal === 'SELL' ? 'BEARISH' : 'NEUTRAL'
-  const action =
-    signal === 'BUY'
-      ? 'Consider entering at current price with strict risk management.'
-      : signal === 'SELL'
-        ? 'Consider reducing exposure or waiting for confirmation.'
-        : 'Wait for a clearer setup before taking action.'
-
-  return `Based on ${bullish} bullish signals and ${warnings} warnings, the overall bias is ${bias}. ${action}`
 }
 
 export default function AnalysisSummary({ result }) {
   if (!result) return null
   const items = buildSummaryItems(result)
-  const conclusion = buildConclusion(items, result)
+  const conclusion = result.conclusion
 
   return (
-    <div className="flex-1 bg-terminal-panel border border-terminal-border rounded p-2 flex flex-col justify-between h-full overflow-hidden">
-      <div className="flex-1 flex flex-col min-h-0">
-        <h3 className="text-[13px] text-terminal-muted uppercase tracking-wide mb-2">
-          Analysis Summary
-        </h3>
-        <ul className="flex flex-col gap-2 min-h-0">
-          {items.map((item, i) => (
-            <SummaryLine key={i} type={item.type} text={item.text} />
-          ))}
-        </ul>
-      </div>
-
-      <div className="pt-2 mt-auto border-t border-terminal-border">
+    <div className="bg-terminal-panel border border-terminal-border rounded p-2 flex flex-col overflow-hidden h-full">
+      <h3 className="shrink-0 text-[13px] text-terminal-muted uppercase tracking-wide mb-1">
+        Analysis Summary
+      </h3>
+      <ul className="flex-1 overflow-y-auto flex flex-col gap-1.5 min-h-0 mb-2">
+        {items.map((item, i) => (
+          <SummaryLine key={i} type={item.type} text={item.text} />
+        ))}
+      </ul>
+      <div className="shrink-0 pt-2 border-t border-terminal-border">
         <h4 className="text-[12px] text-terminal-muted uppercase tracking-wide mb-1">Conclusion</h4>
         <p className="text-[12px] text-gray-400 leading-snug">{conclusion}</p>
       </div>

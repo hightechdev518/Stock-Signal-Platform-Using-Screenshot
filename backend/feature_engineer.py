@@ -7,12 +7,28 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
-
+from debug_logging import pipeline_log
 from ocr_parser import validate_ma_value
+from yfinance_setup import configure_yfinance_cache, safe_ticker_history
+
+configure_yfinance_cache()
 
 
-DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "SPY", "QQQ"]
+DEFAULT_TICKERS = [
+    # Large caps
+    "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA",
+    "NVDA", "META", "SPY", "QQQ",
+    # ETFs
+    "DIA", "IWM",
+    # Mid caps
+    "SAIC", "PLTR", "COIN", "INTC",
+    # Client tested stocks
+    "OCGN", "SNDL", "SLXN", "GRAN",
+    # Other volatile
+    "MSTR", "GME", "CENN", "MULN",
+    # Note: XSLL and PAPL may have limited
+    # yfinance history — will skip if < 100 bars
+]
 
 
 def _ema(series: pd.Series, span: int) -> pd.Series:
@@ -57,18 +73,60 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) ->
     return tr.rolling(length).mean()
 
 
+def _vwap(high, low, close, volume):
+    typical_price = (high + low + close) / 3
+    return (typical_price * volume).cumsum() / volume.cumsum()
+
+
+def _adx(high, low, close, length=14):
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    tr = _atr(high, low, close, length)
+    plus_di = 100 * (_ema(plus_dm, length) / tr.replace(0, np.nan))
+    minus_di = 100 * (_ema(minus_dm, length) / tr.replace(0, np.nan))
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return _ema(dx, length), plus_di, minus_di
+
+
+def _cci(high, low, close, length=20):
+    typical_price = (high + low + close) / 3
+    ma = typical_price.rolling(length).mean()
+    mad = typical_price.rolling(length).apply(
+        lambda x: np.mean(np.abs(x - np.mean(x)))
+    )
+    return (typical_price - ma) / (0.015 * mad.replace(0, np.nan))
+
+
+def _pivot_points(high: pd.Series, low: pd.Series,
+                  close: pd.Series):
+    """Calculate daily pivot points from previous bar's H/L/C."""
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+    pp = (prev_high + prev_low + prev_close) / 3
+    r1 = 2 * pp - prev_low
+    s1 = 2 * pp - prev_high
+    r2 = pp + (prev_high - prev_low)
+    s2 = pp - (prev_high - prev_low)
+    return pp, r1, s1, r2, s2
+
+
+def _support_resistance(close, length=20):
+    resistance = close.rolling(length).max()
+    support = close.rolling(length).min()
+    return resistance, support
+
+
 def fetch_historical(ticker: str = "SPY", period: str = "6mo", interval: str = "1d") -> pd.DataFrame:
-    try:
-        t = yf.Ticker(ticker if ticker != "unknown" else "SPY")
-        df = t.history(period=period, interval=interval)
-        if df.empty:
-            t = yf.Ticker("SPY")
-            df = t.history(period=period, interval=interval)
-    except Exception:
-        t = yf.Ticker("SPY")
-        df = t.history(period=period, interval=interval)
-    df = df.rename(columns=str.lower)
-    return df
+    symbol = ticker if ticker != "unknown" else "SPY"
+    df = safe_ticker_history(symbol, period=period, interval=interval)
+    if df is None or df.empty:
+        df = safe_ticker_history("SPY", period=period, interval=interval)
+    if df is None or df.empty:
+        raise ValueError("Could not fetch historical data from yfinance")
+    return df.rename(columns=str.lower)
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -97,6 +155,31 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["vol_ratio"] = volume / out["vol_sma"].replace(0, np.nan)
     out["roc_5"] = close.pct_change(5) * 100
     out["roc_20"] = close.pct_change(20) * 100
+
+    # VWAP
+    out["vwap"] = _vwap(high, low, close, volume)
+
+    # ADX
+    adx, plus_di, minus_di = _adx(high, low, close)
+    out["adx"] = adx
+    out["plus_di"] = plus_di
+    out["minus_di"] = minus_di
+
+    # CCI
+    out["cci"] = _cci(high, low, close)
+
+    # Pivot Points
+    pp, r1, s1, r2, s2 = _pivot_points(high, low, close)
+    out["pivot"] = pp
+    out["pivot_r1"] = r1
+    out["pivot_s1"] = s1
+    out["pivot_r2"] = r2
+    out["pivot_s2"] = s2
+
+    # Support / Resistance
+    out["resistance"] = close.rolling(20).max()
+    out["support"] = close.rolling(20).min()
+
     return out
 
 
@@ -162,6 +245,8 @@ def bollinger_position(close: float, upper: float, mid: float, lower: float) -> 
 
 
 def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = None) -> dict[str, Any]:
+    pipeline_log(f"[FEATURE] MA5 received: {ocr_data.get('ma5')}")
+    pipeline_log(f"[FEATURE] ma5_from_ocr: {ocr_data.get('ma5_from_ocr')}")
     ticker = ocr_data.get("ticker", "unknown")
     if df is None:
         interval = "1d"
@@ -171,10 +256,20 @@ def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = 
 
     df = compute_indicators(df)
     latest = df.iloc[-1]
-    price = ocr_data.get("price") or float(latest["close"])
+    ocr_price = ocr_data.get("price")
+    if ocr_price is None or float(ocr_price or 0) == 0:
+        price = float(latest["close"])
+    else:
+        price = float(ocr_price)
 
     def _use_ocr_or_hist(ocr_key: str, hist_key: str) -> float:
         ocr_val = ocr_data.get(ocr_key)
+        if ocr_data.get(f"{ocr_key}_from_ocr") and ocr_val is not None:
+            chosen = round(float(ocr_val), 4)
+            if ocr_key == "ma5":
+                pipeline_log(f"[FEATURE] MA5 using OCR (ma5_from_ocr=True): {chosen}")
+            return chosen
+
         if ocr_val is not None:
             ocr_val = validate_ma_value(ocr_val, price)
         hist_raw = float(latest.get(hist_key, price) or price)
@@ -187,16 +282,23 @@ def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = 
             if ocr_val is not None:
                 return float(ocr_val)
 
-        if ocr_val is not None and hist_val is not None:
-            if price > 0 and abs(ocr_val - price) / price < abs(hist_val - price) / max(price, 1e-9):
-                return float(ocr_val)
-            if abs(hist_val - price) / max(price, 1e-9) > 0.5:
-                return float(ocr_val)
         if ocr_val is not None:
-            return float(ocr_val)
+            chosen = float(ocr_val)
+            if ocr_key == "ma5":
+                pipeline_log(
+                    f"[FEATURE] MA5 using OCR (no flag): {chosen} "
+                    f"(hist ema_5 was {hist_val})"
+                )
+            return chosen
         if hist_val is not None:
-            return float(hist_val)
-        return float(price)
+            chosen = float(hist_val)
+            if ocr_key == "ma5":
+                pipeline_log(f"[FEATURE] MA5 using yfinance/hist ema_5: {chosen}")
+            return chosen
+        chosen = float(price)
+        if ocr_key == "ma5":
+            pipeline_log(f"[FEATURE] MA5 fallback to price: {chosen}")
+        return chosen
 
     ma5 = _use_ocr_or_hist("ma5", "ema_5")
     ma10 = _use_ocr_or_hist("ma10", "ema_10")
@@ -222,11 +324,86 @@ def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = 
     bb_lower = latest.get("bb_lower", np.nan)
     bb_pos = bollinger_position(price, bb_upper, bb_mid, bb_lower)
 
-    atr = float(latest["atr"]) if pd.notna(latest.get("atr")) else price * 0.02
+    if ocr_data.get("atr"):
+        atr = float(ocr_data["atr"])
+    else:
+        atr = float(latest["atr"]) if pd.notna(latest.get("atr")) else price * 0.02
     # Scale ATR to OCR price when historical ticker differs in magnitude (e.g. penny stock vs SPY)
     if price > 0 and atr > price * 0.15:
         atr = price * 0.02
-    vol_ratio = float(latest["vol_ratio"]) if pd.notna(latest.get("vol_ratio")) else 1.0
+    if ocr_data.get("volume"):
+        stable_vol = float(ocr_data["volume"])
+        vol_sma = float(latest["vol_sma"]) if pd.notna(latest.get("vol_sma")) else stable_vol
+        vol_ratio = stable_vol / vol_sma if vol_sma > 0 else 1.0
+    else:
+        vol_ratio = float(latest["vol_ratio"]) if pd.notna(latest.get("vol_ratio")) else 1.0
+
+    # VWAP
+    vwap = float(latest["vwap"]) if pd.notna(latest.get("vwap")) else price
+    vwap_signal = "bullish" if price > vwap else "bearish"
+
+    # ADX
+    adx = float(latest["adx"]) if pd.notna(latest.get("adx")) else 20.0
+    plus_di = float(latest["plus_di"]) if pd.notna(latest.get("plus_di")) else 20.0
+    minus_di = float(latest["minus_di"]) if pd.notna(latest.get("minus_di")) else 20.0
+    trend_strength = "strong" if adx > 25 else "weak"
+    adx_signal = "bullish" if plus_di > minus_di else "bearish"
+
+    # CCI
+    cci = float(latest["cci"]) if pd.notna(latest.get("cci")) else 0.0
+    cci_signal = (
+        "overbought" if cci > 100
+        else "oversold" if cci < -100
+        else "neutral"
+    )
+
+    # Support / Resistance
+    resistance = float(latest["resistance"]) if pd.notna(latest.get("resistance")) else price * 1.05
+    support = float(latest["support"]) if pd.notna(latest.get("support")) else price * 0.95
+    sr_signal = (
+        "near_resistance" if price >= resistance * 0.98
+        else "near_support" if price <= support * 1.02
+        else "middle"
+    )
+
+    # Pivot Points
+    pivot = float(latest["pivot"]) if pd.notna(
+        latest.get("pivot")) else price
+    pivot_r1 = float(latest["pivot_r1"]) if pd.notna(
+        latest.get("pivot_r1")) else price * 1.01
+    pivot_s1 = float(latest["pivot_s1"]) if pd.notna(
+        latest.get("pivot_s1")) else price * 0.99
+    pivot_r2 = float(latest["pivot_r2"]) if pd.notna(
+        latest.get("pivot_r2")) else price * 1.02
+    pivot_s2 = float(latest["pivot_s2"]) if pd.notna(
+        latest.get("pivot_s2")) else price * 0.98
+
+    # Pivot signal
+    if price >= pivot_r2:
+        pivot_signal = "above_r2"
+        pivot_bias = "strong_bullish"
+    elif price >= pivot_r1:
+        pivot_signal = "above_r1"
+        pivot_bias = "bullish"
+    elif price >= pivot:
+        pivot_signal = "above_pivot"
+        pivot_bias = "bullish"
+    elif price >= pivot_s1:
+        pivot_signal = "below_pivot"
+        pivot_bias = "bearish"
+    elif price >= pivot_s2:
+        pivot_signal = "below_s1"
+        pivot_bias = "bearish"
+    else:
+        pivot_signal = "below_s2"
+        pivot_bias = "strong_bearish"
+
+    # Pivot score for ML
+    pivot_score = (
+        1.0 if pivot_bias in ("strong_bullish", "bullish")
+        else 0.0
+    )
+
     sma50 = float(latest["sma_50"]) if pd.notna(latest.get("sma_50")) else price
     sma200 = float(latest["sma_200"]) if pd.notna(latest.get("sma_200")) else price
 
@@ -240,9 +417,14 @@ def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = 
     volume_label = classify_volume(vol_ratio)
     rsi_zone = None if rsi is None else ("overbought" if rsi > 70 else ("oversold" if rsi < 30 else "neutral"))
     long_trend = "uptrend" if sma50 > sma200 else "downtrend"
-    momentum = "strong" if abs(ocr_data.get("change_pct") or 0) > 5 else "moderate"
+    roc5_val = float(latest.get("roc_5", 0) or 0)
+    momentum = (
+        "strong" if abs(roc5_val) > 3
+        else "moderate" if abs(roc5_val) > 1
+        else "weak"
+    )
 
-    return {
+    features = {
         "price": price,
         "ma5": ma5,
         "ma10": ma10,
@@ -268,12 +450,51 @@ def build_feature_vector(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = 
         "change_pct": ocr_data.get("change_pct", 0),
         "timeframe": ocr_data.get("timeframe", "1min"),
     }
+    features["vwap"] = vwap
+    features["vwap_signal"] = vwap_signal
+    features["adx"] = adx
+    features["adx_signal"] = adx_signal
+    features["trend_strength"] = trend_strength
+    features["cci"] = cci
+    features["cci_signal"] = cci_signal
+    features["resistance"] = resistance
+    features["support"] = support
+    features["sr_signal"] = sr_signal
+    features["bb_score"] = (
+        1.0 if bb_pos in ("upper_band_breakout", "upper_half")
+        else 0.0
+    )
+    features["pivot"] = pivot
+    features["pivot_r1"] = pivot_r1
+    features["pivot_s1"] = pivot_s1
+    features["pivot_r2"] = pivot_r2
+    features["pivot_s2"] = pivot_s2
+    features["pivot_signal"] = pivot_signal
+    features["pivot_bias"] = pivot_bias
+    features["pivot_score"] = pivot_score
+    pipeline_log(f"[FEATURE] MA5 final value used: {features.get('ma5')}")
+    return features
 
 
 def features_to_ml_array(features: dict[str, Any]) -> np.ndarray:
+    price = features["price"]
+    vwap = features.get("vwap", price)
+    vwap_sig = 1.0 if price > vwap else 0.0
+
+    adx = features.get("adx", 20)
+    adx_sig = 1.0 if features.get("adx_signal") == "bullish" else 0.0
+    adx_strength = 1.0 if features.get("trend_strength") == "strong" else 0.0
+
+    cci = features.get("cci", 0)
+    cci_norm = max(-2.0, min(2.0, cci / 100))
+
+    resistance = features.get("resistance", price * 1.05)
+    support = features.get("support", price * 0.95)
+    sr_pos = (price - support) / (resistance - support + 1e-9)
+
     return np.array(
         [
-            features["price"],
+            price,
             features["ma5"],
             features["ma10"],
             features["ma20"],
@@ -286,6 +507,13 @@ def features_to_ml_array(features: dict[str, Any]) -> np.ndarray:
             features["roc_20"],
             1.0 if features["long_trend"] == "uptrend" else 0.0,
             features.get("change_pct", 0) or 0,
+            vwap_sig,
+            adx_sig,
+            adx_strength,
+            cci_norm,
+            sr_pos,
+            features.get("bb_score", 0.5),
+            features.get("pivot_score", 0.5),
         ],
         dtype=np.float32,
     ).reshape(1, -1)
@@ -293,5 +521,8 @@ def features_to_ml_array(features: dict[str, Any]) -> np.ndarray:
 
 FEATURE_NAMES = [
     "price", "ma5", "ma10", "ma20", "rsi", "macd_bullish",
-    "atr", "vol_ratio", "ma_signal", "roc_5", "roc_20", "long_trend", "change_pct",
+    "atr", "vol_ratio", "ma_signal", "roc_5", "roc_20",
+    "long_trend", "change_pct",
+    "vwap_signal", "adx_signal", "adx_strength",
+    "cci_norm", "sr_position", "bb_score", "pivot_score",
 ]

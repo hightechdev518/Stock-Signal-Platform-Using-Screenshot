@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+pytesseract
+Pillow
+xgboost
+lightgbm
+scikit-learn
+pandas
+numpy
+yfinance
+python-multipart

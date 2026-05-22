@@ -1,15 +1,56 @@
-const SIGNAL_STYLES = {
-  BUY: { bg: 'bg-emerald-500/20', border: 'border-emerald-500', text: 'text-emerald-400' },
-  SELL: { bg: 'bg-red-500/20', border: 'border-red-500', text: 'text-red-400' },
-  HOLD: { bg: 'bg-amber-500/20', border: 'border-amber-500', text: 'text-amber-400' },
+function getSignalStyle(signal, confidence) {
+  const c = Number(confidence) || 0
+
+  if (signal === 'BUY') {
+    if (c >= 80) {
+      return {
+        bg: 'bg-emerald-400/25',
+        border: 'border-emerald-300',
+        text: 'text-emerald-300',
+        bar: 'bg-emerald-300',
+      }
+    }
+    if (c >= 65) {
+      return {
+        bg: 'bg-emerald-500/15',
+        border: 'border-emerald-600',
+        text: 'text-emerald-500',
+        bar: 'bg-emerald-500',
+      }
+    }
+  }
+
+  if (signal === 'SELL' && c >= 65) {
+    if (c >= 80) {
+      return {
+        bg: 'bg-red-400/25',
+        border: 'border-red-300',
+        text: 'text-red-300',
+        bar: 'bg-red-300',
+      }
+    }
+    return {
+      bg: 'bg-red-500/20',
+      border: 'border-red-500',
+      text: 'text-red-400',
+      bar: 'bg-red-500',
+    }
+  }
+
+  return {
+    bg: 'bg-amber-500/20',
+    border: 'border-amber-500',
+    text: 'text-amber-400',
+    bar: 'bg-amber-500',
+  }
 }
 
-export default function SignalCard({ signal, confidence, compact = false }) {
-  const style = SIGNAL_STYLES[signal] || SIGNAL_STYLES.HOLD
+export default function SignalCard({ signal, confidence, compact = false, pulse = false }) {
+  const style = getSignalStyle(signal, confidence)
 
   if (compact) {
     return (
-      <div className={`rounded-lg border p-2.5 h-full flex flex-col justify-between ${style.bg} ${style.border}`}>
+      <div className={`rounded-lg border p-2.5 h-full flex flex-col justify-between ${style.bg} ${style.border} ${pulse ? 'signal-pulse' : ''}`}>
         <div className="flex items-center justify-between gap-2">
           <span className="text-[12px] text-terminal-muted uppercase">Signal</span>
           <span className={`text-[36px] font-bold leading-none ${style.text}`}>{signal}</span>
@@ -21,7 +62,7 @@ export default function SignalCard({ signal, confidence, compact = false }) {
           </div>
           <div className="h-1.5 bg-terminal-border rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full ${signal === 'BUY' ? 'bg-emerald-500' : signal === 'SELL' ? 'bg-red-500' : 'bg-amber-500'}`}
+              className={`h-full rounded-full ${style.bar}`}
               style={{ width: `${confidence}%` }}
             />
           </div>
@@ -41,7 +82,7 @@ export default function SignalCard({ signal, confidence, compact = false }) {
         </div>
         <div className="h-2 bg-terminal-border rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full ${signal === 'BUY' ? 'bg-emerald-500' : signal === 'SELL' ? 'bg-red-500' : 'bg-amber-500'}`}
+            className={`h-full rounded-full ${style.bar}`}
             style={{ width: `${confidence}%` }}
           />
         </div>

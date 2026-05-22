@@ -3,23 +3,67 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "electron.js",
+  "homepage": "http://127.0.0.1:3000",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "electron": "electron .",
+    "electron-dev": "concurrently \"npm start\" \"wait-on http://127.0.0.1:3000 && electron .\"",
+    "build-backend": "cd ..\\backend && .\\venv\\Scripts\\pip.exe install pyinstaller -q && .\\venv\\Scripts\\pyinstaller.exe stock_signal_backend.spec --clean",
+    "build-electron": "npm run build-backend && set VITE_API_URL=http://127.0.0.1:8000&& npm run build && set CSC_IDENTITY_AUTO_DISCOVERY=false&& electron-builder build --win --publish never",
     "preview": "vite preview",
     "start": "vite"
   },
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "wait-on": "^9.0.10"
   },
   "devDependencies": {
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
+    "concurrently": "^9.2.1",
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
     "postcss": "^8.4.33",
     "tailwindcss": "^3.4.1",
     "vite": "^5.0.12"
+  },
+  "build": {
+    "appId": "com.stocksignal.analyzer",
+    "productName": "Stock Signal Analyzer",
+    "files": [
+      "electron.js",
+      "package.json",
+      "app-ui/**/*",
+      "public/icon.png"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/icon.ico",
+      "installerHeaderIcon": "public/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "extraResources": [
+      {
+        "from": "../backend/dist/stock-signal-backend.exe",
+        "to": "stock-signal-backend.exe"
+      },
+      {
+        "from": "../models",
+        "to": "models",
+        "filter": ["**/*"]
+      }
+    ]
   }
 }

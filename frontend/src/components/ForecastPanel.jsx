@@ -9,6 +9,16 @@ function getPanelMidLines(panelId, result) {
   const trendStrength = `Trend strength: ${ind.momentum || 'Moderate'} ${signal === 'BUY' ? 'bullish' : signal === 'SELL' ? 'bearish' : ''}`.trim()
 
   switch (panelId) {
+    case 'same_day':
+      return [
+        `Volatility: ${volShort}`,
+        `Confidence: ${result.confidence ?? '—'}%`,
+      ]
+    case 'same_week':
+      return [
+        `Trend: ${ind.MA_trend || 'Neutral'}`,
+        `Volume: ${ind.volume || 'Normal volume'}`,
+      ]
     case 'short':
       return [
         `Volatility: ${volShort}`,
@@ -52,6 +62,16 @@ function getPanelExtras(panelId, result) {
   const risk = result.risk_assessment || 'Moderate'
 
   switch (panelId) {
+    case 'same_day':
+      return [
+        `Entry signal strength: ${strength}`,
+        'Intraday target — monitor closely',
+      ]
+    case 'same_week':
+      return [
+        `Key resistance: $${result.take_profit}`,
+        `Key support: $${result.stop_loss}`,
+      ]
     case 'short':
       return [
         `Entry signal strength: ${strength}`,
@@ -86,23 +106,23 @@ function Row({ label, value, valueClass = 'text-gray-100' }) {
   )
 }
 
-function DetailLine({ text }) {
-  return <p className="text-gray-400 text-[12px] leading-snug">{text}</p>
+function EstimateValue({ value }) {
+  if (typeof value !== 'string') return value
+
+  const match = value.match(/^~(.+?)\s+(\(within .+\))$/)
+  if (!match) return value
+
+  return (
+    <>
+      <span className="text-gray-500">~</span>
+      <span>{match[1]}</span>{' '}
+      <span className="text-emerald-400">{match[2]}</span>
+    </>
+  )
 }
 
-function panelTimeframe(panelId, fallback) {
-  switch (panelId) {
-    case 'short':
-      return 'Timeframe: 2-4 hours'
-    case 'medium':
-      return 'Timeframe: 3-7 days'
-    case 'long':
-      return 'Timeframe: 2-4 weeks'
-    case 'monthly':
-      return 'Timeframe: 1-3 months'
-    default:
-      return `Timeframe: ${fallback}`
-  }
+function DetailLine({ text }) {
+  return <p className="text-gray-400 text-[12px] leading-snug">{text}</p>
 }
 
 export default function ForecastPanel({ title, forecast, compact = false, panelId, result }) {
@@ -119,21 +139,22 @@ export default function ForecastPanel({ title, forecast, compact = false, panelI
 
   const midLines = compact && panelId ? getPanelMidLines(panelId, result) : []
   const extras = compact && panelId ? getPanelExtras(panelId, result) : []
+  const estimatedWithin = forecast.predicted_by || forecast.timeframe
 
   if (compact) {
-    const detailLines = [panelTimeframe(panelId, forecast.timeframe), ...midLines, ...extras]
+    const detailLines = [...midLines, ...extras]
 
     return (
       <div className="bg-terminal-panel border border-terminal-border rounded p-2 h-full flex flex-col gap-2">
         <h3 className="text-[13px] text-terminal-muted uppercase tracking-wide">{title}</h3>
-        <div className="space-y-1">
+        <div className="shrink-0 space-y-1">
           <Row label="Direction" value={forecast.direction} valueClass={`font-semibold ${dirColor}`} />
           <Row label="Target" value={`$${forecast.target}`} />
-          <Row label="Timeframe" value={forecast.timeframe} valueClass="text-gray-400" />
+          <Row label="Estimate" value={<EstimateValue value={estimatedWithin} />} valueClass="text-terminal-accent" />
           <p className="text-gray-500 text-[12px] leading-snug">{forecast.note}</p>
         </div>
 
-        <div className="flex-1 rounded bg-black/10 border border-terminal-border/50 p-2 flex flex-col justify-evenly gap-1">
+        <div className="flex-1 min-h-0 max-h-full overflow-y-auto rounded bg-black/10 border border-terminal-border/50 p-2 flex flex-col gap-1">
           {detailLines.map((line, i) => (
             <DetailLine key={`detail-${i}`} text={line} />
           ))}
@@ -148,7 +169,7 @@ export default function ForecastPanel({ title, forecast, compact = false, panelI
       <div className="space-y-2">
         <Row label="Direction" value={forecast.direction} valueClass={`font-semibold ${dirColor}`} />
         <Row label="Target" value={`$${forecast.target}`} />
-        <Row label="Timeframe" value={forecast.timeframe} valueClass="text-gray-300" />
+        <Row label="Estimate" value={<EstimateValue value={estimatedWithin} />} valueClass="text-terminal-accent" />
         <p className="text-gray-400 text-sm pt-2 border-t border-terminal-border">{forecast.note}</p>
       </div>
     </div>

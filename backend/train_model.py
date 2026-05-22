@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from backtest import generate_labels, row_to_features
 from feature_engineer import DEFAULT_TICKERS, compute_indicators, fetch_historical
-from ml_model import MODEL_PATH, SignalEnsemble
+from ml_model import SignalEnsemble
+from paths import model_path
 
 
 def build_training_dataset(tickers: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -86,8 +87,9 @@ def train_and_save():
     ensemble.xgb_model = xgb
     ensemble.lgb_model = lgb
     ensemble.is_trained = True
-    ensemble.save(MODEL_PATH)
-    print(f"Model saved to {MODEL_PATH}")
+    out = model_path()
+    ensemble.save(out)
+    print(f"Model saved to {out}")
 
     from backtest import run_backtest
 

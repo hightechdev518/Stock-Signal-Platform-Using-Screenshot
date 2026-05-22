@@ -42,6 +42,34 @@ def row_to_features(row: pd.Series, prev_rows: pd.DataFrame) -> np.ndarray:
     long_trend = 1.0 if sma50 > sma200 else 0.0
     change_pct = float(row.get("roc_5", 0) or 0)
 
+    # New indicators
+    vwap = float(row.get("vwap", price) or price)
+    vwap_sig = 1.0 if price > vwap else 0.0
+
+    adx = float(row.get("adx", 20) or 20)
+    plus_di = float(row.get("plus_di", 20) or 20)
+    minus_di = float(row.get("minus_di", 20) or 20)
+    adx_sig = 1.0 if plus_di > minus_di else 0.0
+    adx_strength = 1.0 if adx > 25 else 0.0
+
+    cci = float(row.get("cci", 0) or 0)
+    cci_norm = max(-2.0, min(2.0, cci / 100))
+
+    resistance = float(row.get("resistance", price * 1.05) or price * 1.05)
+    support = float(row.get("support", price * 0.95) or price * 0.95)
+    sr_pos = (price - support) / (resistance - support + 1e-9)
+
+    bb_upper = float(row.get("bb_upper", price) or price)
+    bb_lower = float(row.get("bb_lower", price) or price)
+    bb_mid = float(row.get("bb_mid", price) or price)
+    bb_score = (
+        1.0 if price >= bb_upper or price > bb_mid
+        else 0.0
+    )
+
+    pivot = float(row.get("pivot", price) or price)
+    pivot_score = 1.0 if price >= pivot else 0.0
+
     return np.array(
         [
             price,
@@ -57,6 +85,13 @@ def row_to_features(row: pd.Series, prev_rows: pd.DataFrame) -> np.ndarray:
             roc20,
             long_trend,
             change_pct,
+            vwap_sig,
+            adx_sig,
+            adx_strength,
+            cci_norm,
+            sr_pos,
+            bb_score,
+            pivot_score,
         ],
         dtype=np.float32,
     )
