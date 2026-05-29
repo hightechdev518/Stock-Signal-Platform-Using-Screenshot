@@ -4,6 +4,7 @@ FastAPI backend for Stock Signal Analysis Tool.
 
 import asyncio
 import gc
+import math
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from backtest import run_backtest
 from debug_logging import setup_debug_logging
 from ocr_parser import parse_screenshot
+from scanner import get_scanner_list
 from yfinance_setup import configure_yfinance_cache
 
 setup_debug_logging()
@@ -24,6 +26,19 @@ configure_yfinance_cache()
 from paths import model_path
 from signal_engine import analyze, analyze_live
 from market_hours import get_market_status
+
+
+def sanitize_nans(obj):
+    """Recursively replace NaN/Inf floats with None."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: sanitize_nans(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_nans(v) for v in obj]
+    return obj
 
 
 @asynccontextmanager
@@ -109,7 +124,11 @@ async def live_signal(ticker: str):
     """
     print(f"Live data fetched for {ticker} at {datetime.now()}")
     try:
-        return analyze_live(ticker)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, analyze_live, ticker)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Ticker not found")
+        return sanitize_nans(result)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -117,6 +136,89 @@ async def live_signal(ticker: str):
             status_code=422,
             detail=f"Live data unavailable for {ticker.upper()}. Detail: {str(e)}",
         )
+
+
+@app.get("/scanner")
+async def scanner(category: str = "gainers"):
+    """
+    Fetch top gainers, losers, or most active stocks
+    with quick signal for each.
+    category: gainers | losers | active | all
+    """
+    try:
+        from scanner import get_scanner_list
+
+        loop = asyncio.get_running_loop()
+        all_stocks = await loop.run_in_executor(
+            None, get_scanner_list, category
+        )
+        
+        def sort_change(s, reverse=True):
+            try:
+                return float(s.get("change_pct") or 0)
+            except:
+                return 0.0
+        
+        def sort_vol(s):
+            try:
+                return float(s.get("vol_ratio") or 0)
+            except:
+                return 0.0
+        
+        if category == "gainers":
+            stocks = sorted(all_stocks, 
+                key=lambda x: sort_change(x), reverse=True)[:10]
+        elif category == "losers":
+            stocks = sorted(all_stocks,
+                key=lambda x: sort_change(x), reverse=False)[:10]
+        elif category == "active":
+            stocks = sorted(all_stocks,
+                key=lambda x: sort_vol(x), reverse=True)[:10]
+        else:
+            stocks = all_stocks
+            
+        return sanitize_nans({"category": category, "stocks": stocks})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/scanner/all")
+async def scanner_all():
+    try:
+        from scanner import get_scanner_list
+
+        loop = asyncio.get_running_loop()
+        all_stocks = await loop.run_in_executor(
+            None, get_scanner_list, "all"
+        )
+        
+        def sort_change(s, reverse=True):
+            try:
+                return float(s.get("change_pct") or 0)
+            except:
+                return 0.0
+        
+        def sort_vol(s):
+            try:
+                return float(s.get("vol_ratio") or 0)
+            except:
+                return 0.0
+        
+        gainers = sorted(all_stocks,
+            key=lambda x: sort_change(x), reverse=True)[:10]
+        losers = sorted(all_stocks,
+            key=lambda x: sort_change(x), reverse=False)[:10]
+        active = sorted(all_stocks,
+            key=lambda x: sort_vol(x), reverse=True)[:10]
+        
+        return sanitize_nans({
+            "gainers": gainers,
+            "losers": losers,
+            "active": active,
+            "all": all_stocks
+        })
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.post("/analyze")
@@ -147,7 +249,7 @@ async def analyze_screenshot(file: UploadFile = File(...)):
             )
 
         result = analyze(ocr_data)
-        return result
+        return sanitize_nans(result)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except HTTPException:

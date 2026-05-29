@@ -657,6 +657,7 @@ def analyze(ocr_data: dict[str, Any], df: Optional[pd.DataFrame] = None) -> dict
         "volume": format_volume(features),
         "bollinger": format_bollinger(features["bollinger_pos"]),
         "ATR": round(features["atr"], 4),
+        "vol_ratio": round(features.get("vol_ratio", 1.0), 2),
         "momentum": features["momentum"].capitalize(),
         "vwap": round(features.get("vwap", 0), 4),
         "vwap_signal": features.get("vwap_signal", ""),

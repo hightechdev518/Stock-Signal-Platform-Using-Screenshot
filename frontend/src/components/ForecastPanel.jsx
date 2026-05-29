@@ -97,6 +97,28 @@ function getPanelExtras(panelId, result) {
   }
 }
 
+const calcPct = (target, current) => {
+  if (!target || !current) return null
+  return ((target - current) / current * 100).toFixed(2)
+}
+
+function DirectionValue({ direction, pctChange, dirColor }) {
+  if (pctChange == null) {
+    return <span className={`font-semibold ${dirColor}`}>{direction}</span>
+  }
+  const num = Number(pctChange)
+  const pctColor = num > 0 ? '#00cc66' : num < 0 ? '#ff4444' : '#556677'
+  const pctText = num > 0 ? `+${pctChange}%` : `${pctChange}%`
+  return (
+    <span className="inline-flex items-center gap-1.5 justify-end flex-wrap">
+      <span className={`font-semibold ${dirColor}`}>{direction}</span>
+      <span className="font-bold text-[13px]" style={{ color: pctColor }}>
+        {pctText}
+      </span>
+    </span>
+  )
+}
+
 function Row({ label, value, valueClass = 'text-gray-100' }) {
   return (
     <div className="flex justify-between gap-1">
@@ -140,6 +162,15 @@ export default function ForecastPanel({ title, forecast, compact = false, panelI
   const midLines = compact && panelId ? getPanelMidLines(panelId, result) : []
   const extras = compact && panelId ? getPanelExtras(panelId, result) : []
   const estimatedWithin = forecast.predicted_by || forecast.timeframe
+  const currentPrice = result?.price ?? result?.entry_price
+  const pctChange = calcPct(forecast.target, currentPrice)
+  const directionValue = (
+    <DirectionValue
+      direction={forecast.direction}
+      pctChange={pctChange}
+      dirColor={dirColor}
+    />
+  )
 
   if (compact) {
     const detailLines = [...midLines, ...extras]
@@ -148,7 +179,7 @@ export default function ForecastPanel({ title, forecast, compact = false, panelI
       <div className="bg-terminal-panel border border-terminal-border rounded p-2 h-full flex flex-col gap-2">
         <h3 className="text-[13px] text-terminal-muted uppercase tracking-wide">{title}</h3>
         <div className="shrink-0 space-y-1">
-          <Row label="Direction" value={forecast.direction} valueClass={`font-semibold ${dirColor}`} />
+          <Row label="Direction" value={directionValue} />
           <Row label="Target" value={`$${forecast.target}`} />
           <Row label="Estimate" value={<EstimateValue value={estimatedWithin} />} valueClass="text-terminal-accent" />
           <p className="text-gray-500 text-[12px] leading-snug">{forecast.note}</p>
@@ -167,7 +198,7 @@ export default function ForecastPanel({ title, forecast, compact = false, panelI
     <div className="bg-terminal-panel border border-terminal-border rounded-lg p-4">
       <h3 className="text-terminal-muted text-[13px] uppercase tracking-wider mb-3">{title}</h3>
       <div className="space-y-2">
-        <Row label="Direction" value={forecast.direction} valueClass={`font-semibold ${dirColor}`} />
+        <Row label="Direction" value={directionValue} />
         <Row label="Target" value={`$${forecast.target}`} />
         <Row label="Estimate" value={<EstimateValue value={estimatedWithin} />} valueClass="text-terminal-accent" />
         <p className="text-gray-400 text-sm pt-2 border-t border-terminal-border">{forecast.note}</p>

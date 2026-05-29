@@ -6,6 +6,7 @@ import IndicatorGrid from './components/IndicatorGrid'
 import ForecastPanel from './components/ForecastPanel'
 import AnalysisSummary from './components/AnalysisSummary'
 import LiveModeBar from './components/LiveModeBar'
+import StockScanner from './components/StockScanner'
 
 function PriceCard({ label, value, subtitle, detail, accent }) {
   return (
@@ -69,22 +70,46 @@ function ResultsView({ result, signalPulse, compactUpload, onUpload, loading }) 
           <div className="shrink-0 flex flex-col gap-0">
             <div className="flex gap-1.5">
               <PriceCard
-                label="Buy At"
+                label={
+                  result.signal === 'SELL' ? 'Sell At' :
+                  result.signal === 'HOLD' ? 'Current Price' :
+                  'Buy At'
+                }
                 value={result.buy_at?.price ?? result.entry_price}
-                subtitle="Recommended entry price"
+                subtitle={
+                  result.signal === 'SELL' ? 'Recommended exit price' :
+                  result.signal === 'HOLD' ? 'Current market price' :
+                  'Recommended entry price'
+                }
                 detail={buyTime}
               />
               <PriceCard
-                label="Sell For Profit At"
+                label={
+                  result.signal === 'SELL' ? 'Target (Downside)' :
+                  result.signal === 'HOLD' ? 'Watch Target' :
+                  'Sell For Profit At'
+                }
                 value={result.sell_for_profit?.price ?? result.take_profit}
-                subtitle="Target exit price"
+                subtitle={
+                  result.signal === 'SELL' ? 'Expected price target if selling' :
+                  result.signal === 'HOLD' ? 'Monitor this level' :
+                  'Target exit price'
+                }
                 detail={sellProfitTime}
                 accent="text-emerald-400"
               />
               <PriceCard
-                label="Sell To Cut Loss At"
+                label={
+                  result.signal === 'SELL' ? 'Stop Loss' :
+                  result.signal === 'HOLD' ? 'Risk Level' :
+                  'Sell To Cut Loss At'
+                }
                 value={result.sell_to_cut_loss?.price ?? result.stop_loss}
-                subtitle={result.sell_to_cut_loss?.note || 'Maximum loss price'}
+                subtitle={
+                  result.signal === 'SELL' ? 'Exit if price rises above this' :
+                  result.signal === 'HOLD' ? 'Key risk level to watch' :
+                  result.sell_to_cut_loss?.note || 'Exit immediately if price drops here'
+                }
                 accent="text-red-400"
               />
             </div>
@@ -100,22 +125,22 @@ function ResultsView({ result, signalPulse, compactUpload, onUpload, loading }) 
 
         <div className="grid grid-cols-2 grid-rows-3 gap-1.5 h-full min-h-0 overflow-hidden">
           <div className="min-h-0 h-full">
-            <ForecastPanel title="SAME DAY" forecast={result.same_day_forecast} compact panelId="same_day" result={result} />
+            <ForecastPanel title="Today" forecast={result.same_day_forecast} compact panelId="same_day" result={result} />
           </div>
           <div className="min-h-0 h-full">
-            <ForecastPanel title="SAME WEEK" forecast={result.same_week_forecast} compact panelId="same_week" result={result} />
+            <ForecastPanel title="3 Days" forecast={result.same_week_forecast} compact panelId="same_week" result={result} />
           </div>
           <div className="min-h-0 h-full">
-            <ForecastPanel title="Short-Term" forecast={result.short_term_forecast} compact panelId="short" result={result} />
+            <ForecastPanel title="1 Week" forecast={result.short_term_forecast} compact panelId="short" result={result} />
           </div>
           <div className="min-h-0 h-full">
-            <ForecastPanel title="Medium-Term" forecast={result.medium_term_forecast} compact panelId="medium" result={result} />
+            <ForecastPanel title="15 Days" forecast={result.medium_term_forecast} compact panelId="medium" result={result} />
           </div>
           <div className="min-h-0 h-full">
-            <ForecastPanel title="Long-Term" forecast={result.long_term_forecast} compact panelId="long" result={result} />
+            <ForecastPanel title="1 Month" forecast={result.long_term_forecast} compact panelId="long" result={result} />
           </div>
           <div className="min-h-0 h-full">
-            <ForecastPanel title="Monthly" forecast={result.monthly_forecast} compact panelId="monthly" result={result} />
+            <ForecastPanel title="3 Months" forecast={result.monthly_forecast} compact panelId="monthly" result={result} />
           </div>
         </div>
       </div>
@@ -149,27 +174,41 @@ export default function Dashboard() {
   const [signalPulse, setSignalPulse] = useState(false)
   const [backendOnline, setBackendOnline] = useState(false)
   const [backendReconnecting, setBackendReconnecting] = useState(true)
+  const [showScanner, setShowScanner] = useState(false)
 
   const prevPriceRef = useRef(null)
+  const failCount = useRef(0)
 
   useEffect(() => {
     let cancelled = false
 
     const checkBackend = async () => {
       try {
-        const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(5000) })
+        const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(12000) })
         if (cancelled) return
-        setBackendOnline(res.ok)
-        setBackendReconnecting(!res.ok)
+        if (res.ok) {
+          failCount.current = 0
+          setBackendOnline(true)
+          setBackendReconnecting(false)
+        } else {
+          failCount.current += 1
+          if (failCount.current >= 3) {
+            setBackendOnline(false)
+            setBackendReconnecting(true)
+          }
+        }
       } catch {
         if (cancelled) return
-        setBackendOnline(false)
-        setBackendReconnecting(true)
+        failCount.current += 1
+        if (failCount.current >= 3) {
+          setBackendOnline(false)
+          setBackendReconnecting(true)
+        }
       }
     }
 
     checkBackend()
-    const interval = setInterval(checkBackend, 3000)
+    const interval = setInterval(checkBackend, 10000)
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -199,7 +238,9 @@ export default function Dashboard() {
     if (!symbol) return
 
     try {
-      const res = await fetch(`${API_BASE}/live/${symbol}`)
+      const res = await fetch(`${API_BASE}/live/${symbol}`, {
+        signal: AbortSignal.timeout(15000)
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Live fetch failed')
 
@@ -218,6 +259,13 @@ export default function Dashboard() {
       setTimeout(() => setSignalPulse(false), 600)
       setError(null)
     } catch (err) {
+      // If timeout or network error during scanner load,
+      // keep showing last result — do not blank the screen
+      if (err.name === 'TimeoutError' ||
+          err.name === 'AbortError') {
+        // silent retry — keep existing result visible
+        return
+      }
       setError(err.message || 'Could not fetch live data.')
     }
   }, [ticker])
@@ -261,6 +309,16 @@ export default function Dashboard() {
     prevPriceRef.current = null
   }
 
+  const handleScannerSelect = (symbol) => {
+    setShowScanner(false)
+    setTicker(symbol)
+    setLiveMode(true)
+    setLiveActive(true)
+    setResult(null)
+    prevPriceRef.current = null
+    setError(null)
+  }
+
   const showResults = Boolean(result) && (!loading || liveActive)
   const showUpload = !liveMode
 
@@ -300,19 +358,34 @@ export default function Dashboard() {
       </header>
 
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden px-3 py-2 gap-2">
-        <LiveModeBar
-          liveMode={liveMode}
-          onToggleLiveMode={handleToggleLiveMode}
-          ticker={ticker}
-          onTickerChange={setTicker}
-          liveActive={liveActive}
-          onStart={handleStartLive}
-          onStop={handleStopLive}
-          result={result}
-          priceFlash={priceFlash}
-          secondsAgo={secondsAgo}
-          lastUpdated={lastUpdated}
-        />
+        <div className="shrink-0 flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => setShowScanner((s) => !s)}
+            className={`shrink-0 mt-2 px-3 py-1.5 rounded border text-[13px] font-medium transition-colors ${
+              showScanner
+                ? 'border-terminal-accent text-terminal-accent bg-terminal-accent/10'
+                : 'border-terminal-border text-terminal-muted hover:border-terminal-accent'
+            }`}
+          >
+            📊 Scanner
+          </button>
+          <div className="flex-1 min-w-0">
+            <LiveModeBar
+              liveMode={liveMode}
+              onToggleLiveMode={handleToggleLiveMode}
+              ticker={ticker}
+              onTickerChange={setTicker}
+              liveActive={liveActive}
+              onStart={handleStartLive}
+              onStop={handleStopLive}
+              result={result}
+              priceFlash={priceFlash}
+              secondsAgo={secondsAgo}
+              lastUpdated={lastUpdated}
+            />
+          </div>
+        </div>
 
         {error && (
           <div className="shrink-0 bg-red-500/10 border border-red-500/50 rounded px-3 py-2 text-red-400 text-[13px] text-center">
@@ -320,41 +393,49 @@ export default function Dashboard() {
           </div>
         )}
 
-        {!showResults && showUpload && (
-          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-6 px-6">
-            <UploadZone onUpload={analyze} loading={loading} />
+        {showScanner ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <StockScanner onSelectTicker={handleScannerSelect} />
+          </div>
+        ) : (
+          <>
+            {!showResults && showUpload && (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-6 px-6">
+                <UploadZone onUpload={analyze} loading={loading} />
 
-            {loading && (
-              <div className="flex items-center justify-center gap-2 shrink-0">
-                <div className="w-5 h-5 border-2 border-terminal-accent border-t-transparent rounded-full animate-spin" />
-                <p className="text-terminal-muted text-[13px]">Analyzing...</p>
+                {loading && (
+                  <div className="flex items-center justify-center gap-2 shrink-0">
+                    <div className="w-5 h-5 border-2 border-terminal-accent border-t-transparent rounded-full animate-spin" />
+                    <p className="text-terminal-muted text-[13px]">Analyzing...</p>
+                  </div>
+                )}
+
+                {!loading && !error && (
+                  <div className="grid grid-cols-3 gap-4 w-full max-w-5xl">
+                    <FeatureCard title="📸 Screenshot Analysis" text="Drop any Webull or TradingView chart screenshot" />
+                    <FeatureCard title="📡 Live Mode" text="Real-time price and signals every 5 seconds for day trading" />
+                    <FeatureCard title="📊 Full Analysis" text="Entry price, TP, SL, and 4 forecast timeframes" />
+                  </div>
+                )}
               </div>
             )}
 
-            {!loading && !error && (
-              <div className="grid grid-cols-3 gap-4 w-full max-w-5xl">
-                <FeatureCard title="📸 Screenshot Analysis" text="Drop any Webull or TradingView chart screenshot" />
-                <FeatureCard title="📡 Live Mode" text="Real-time price and signals every 5 seconds for day trading" />
-                <FeatureCard title="📊 Full Analysis" text="Entry price, TP, SL, and 4 forecast timeframes" />
+            {!showResults && liveMode && !liveActive && (
+              <div className="flex-1 flex items-center justify-center text-terminal-muted text-[14px]">
+                Enter a ticker and click Start Live Analysis
               </div>
             )}
-          </div>
-        )}
 
-        {!showResults && liveMode && !liveActive && (
-          <div className="flex-1 flex items-center justify-center text-terminal-muted text-[14px]">
-            Enter a ticker and click Start Live Analysis
-          </div>
-        )}
-
-        {showResults && (
-          <ResultsView
-            result={result}
-            signalPulse={signalPulse}
-            compactUpload={showUpload && !liveActive}
-            onUpload={analyze}
-            loading={loading}
-          />
+            {showResults && (
+              <ResultsView
+                result={result}
+                signalPulse={signalPulse}
+                compactUpload={showUpload && !liveActive}
+                onUpload={analyze}
+                loading={loading}
+              />
+            )}
+          </>
         )}
       </main>
     </div>
