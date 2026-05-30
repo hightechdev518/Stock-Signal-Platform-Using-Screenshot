@@ -9,13 +9,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from yfinance_setup import configure_yfinance_cache, safe_ticker_history
 
+import json
 import threading
+import time
 import time as _time
+from pathlib import Path
+
+_APP_DATA = Path.home() / "AppData" / "Roaming" / "stock-signal-dashboard"
+METADATA_PATH = _APP_DATA / "ticker_metadata.json"
+TICKER_LIST_PATH = _APP_DATA / "ticker_list.json"
 
 _scanner_cache: list[dict] = []
 _scanner_cache_lock = threading.Lock()
 _scanner_cache_ready = threading.Event()
 _scanner_last_updated: float = 0.0
+_scan_complete = False
 
 # Predefined ticker lists
 LARGE_CAPS = [
@@ -31,26 +39,238 @@ PENNY_STOCKS = [
     "OCGN", "SNDL", "CENN", "SLXN",
     "GRAN", "XSLL", "WKHS",
 ]
-ALL_TICKERS = list(dict.fromkeys([
-'AAPL','MSFT','GOOGL','AMZN','TSLA','NVDA','META','JPM','JNJ','WMT',
-'XOM','V','UNH','PG','MA','HD','CVX','MRK','ABBV','PEP','KO','AVGO','COST',
-'MCD','TMO','ACN','ABT','DHR','NKE','LLY','TXN','NEE','PM','RTX','HON','UNP',
-'MS','GS','SCHW','BLK','SPGI','AXP','ISRG','SYK','GILD','AMGN','BMY','REGN',
-'VRTX','ZTS','ELV','CI','HUM','CVS','MCK','CAT','DE','MMM','GE','ETN','EMR',
-'ITW','PH','ROK','CMI','GWW','FAST','ODFL','UPS','FDX','CSX','NSC','UAL',
-'DAL','LUV','AAL','MAR','HLT','EXPE','BKNG','ABNB','UBER','DASH','COIN',
-'MSTR','PLTR','SAIC','INTC','AMD','MU','QCOM','AMAT','LRCX','KLAC','NFLX',
-'DIS','CMCSA','T','VZ','TMUS','SNAP','PINS','RBLX','HOOD','SOFI','AFRM',
-'UPST','PYPL','FIS','FISV','GPN','BAC','WFC','C','USB','TFC','PNC','KEY',
-'RF','HBAN','CFG','MTB','ZION','FITB','GME','AMC','WKHS','SNDL','MARA',
-'RIOT','HUT','CLSK','CIFR','BTBT','OCGN','CENN','SLXN','GRAN','SPCE',
-'LCID','RIVN','NIO','XPEV','LI','BLNK','CHPT','EVGO','SKLZ','PENN',
-'DKNG','OPEN','CHWY','CLOV','BARK','PAYO','ATER','IMPP','MTCH','BMBL',
-'VRSK','CDNS','SNPS','ADBE','CRM','NOW','WDAY','VEEV','ZM','DOCU',
-'OKTA','CRWD','PANW','FTNT','ZS','NET','DDOG','MDB','SNOW','U',
-'LMND','ROOT','OPAD','GREE','TPVG','OXLC','PSEC','GAIN','MAIN',
-'ARCC','GBDC','HTGC','SLRC','TRIN','NMFC','GSBD','PFLT','FDUS'
-]))
+ALL_TICKERS = [
+    "AAL", "AAP", "AAWW", "ABG", "ABM", "ACC", "ACM", "ACMR", "ACT", "ADNT",
+    "AEO", "AFG", "AGCO", "AGO", "AGR", "AHH", "AHL", "AIT", "AIZ", "AKR",
+    "AL", "ALG", "ALGT", "ALK", "ALL", "ALKS", "ALV", "AM", "AMBC", "AMC",
+    "AMCX", "AMG", "AMP", "AMR", "AMWD", "AN", "ANET", "ANF", "ANH", "ANN",
+    "AON", "AOS", "AP", "APA", "APG", "APH", "APLE", "APO", "AR", "ARC",
+    "ARCO", "ARE", "ARGO", "ARI", "ARR", "ASB", "ASGN", "ASH", "ASO", "ASR",
+    "ASTE", "AT", "ATO", "ATR", "AUB", "AVA", "AVAV", "AVT", "AWI", "AWK",
+    "AXS", "AZZ", "B", "BCC", "BCO", "BDC", "BDN", "BEN", "BFH", "BGS",
+    "BHC", "BHF", "BIG", "BIO", "BJ", "BKH", "BKU", "BL", "BLKB", "BMI",
+    "BMS", "BMY", "BNL", "BOH", "BOX", "BRC", "BRX", "BSM", "BV", "BW",
+    "BWA", "BXC", "BXP", "BY", "BYD", "CABO", "CACI", "CAKE", "CALM", "CAMT",
+    "CAR", "CARS", "CASH", "CASY", "CATO", "CAVA", "CBRL", "CBT", "CBU",
+    "CCOI", "CDK", "CDNS", "CDP", "CDW", "CE", "CFR", "CG", "CGNX", "CHE",
+    "CHGG", "CHH", "CHL", "CHRD", "CHRS", "CHRW", "CHS", "CHX", "CIEN",
+    "CIR", "CIVI", "CKH", "CL", "CLAR", "CLB", "CLDX", "CLF", "CLI", "CLW",
+    "CMC", "CMCO", "CMO", "CMP", "CNK", "CNO", "CNX", "COKE", "COLB", "COLD",
+    "COMM", "CONE", "CONN", "COOP", "COR", "CORT", "COTY", "CPE", "CPF",
+    "CPK", "CPRI", "CRC", "CRK", "CROX", "CRS", "CRY", "CSL", "CSWI", "CTB",
+    "CTLT", "CTRE", "CTS", "CUZ", "CVX", "CVBF", "CW", "CWT", "CXM", "CXW",
+    "CYTOQ", "DAN", "DAR", "DBRG", "DCO", "DD", "DDS", "DEA", "DFS", "DIN",
+    "DKS", "DLB", "DLX", "DNB", "DNOW", "DO", "DOC", "DRH", "DRI", "DRVN",
+    "DSP", "DT", "DV", "DVA", "DXPE", "DY", "EAT", "EBC", "EFC", "EGP",
+    "EHC", "ELF", "ELFK", "ELS", "ELVT", "EME", "EPC", "EPR", "EPRT", "EQC",
+    "EQT", "ERII", "ESE", "ESNT", "ESS", "ESTA", "EVR", "EWC", "EXEL", "EXP",
+    "EXPD", "EXPI", "EXR", "FAST", "FBIN", "FBP", "FCNCA", "FCF", "FELE",
+    "FHI", "FHN", "FI", "FISI", "FL", "FLO", "FLS", "FNB", "FNF", "FORM",
+    "FOUR", "FR", "FUL", "FULT", "G", "GBX", "GEF", "GFF", "GHC", "GKOS",
+    "GL", "GLNG", "GME", "GMS", "GNL", "GNW", "GPOR", "GRC", "GRFS", "GRI",
+    "GVA", "H", "HAE", "HASI", "HAYW", "HBI", "HBIO", "HCC", "HCI", "HE",
+    "HEES", "HGV", "HIW", "HLF", "HMN", "HNI", "HOG", "HOPE", "HP", "HPP",
+    "HQY", "HR", "HRI", "HRB", "HSII", "HTH", "HUN", "HWC", "IBP", "ICL",
+    "IDCC", "IESC", "IGT", "INN", "INVA", "INVEST", "IP", "IPG", "IRT",
+    "ITGR", "JACK", "JBGS", "JBLU", "JELD", "JHG", "JLL", "JOE", "JOBY",
+    "JOUT", "JWN", "KBH", "KBR", "KFY", "KGS", "KMT", "KN", "KNF", "KNX",
+    "KOP", "KRC", "KRG", "KSS", "KTB", "KW", "LADR", "LAZ", "LBC", "LCII",
+    "LEN", "LGF", "LGO", "LII", "LIVN", "LKQ", "LMAT", "LNC", "LNN", "LPX",
+    "LRN", "LSCC", "LTC", "LW", "M", "MAC", "MAN", "MATX", "MBC", "MBI",
+    "MCS", "MDU", "MED", "MEDP", "MEI", "MFA", "MHK", "MHO", "MKL", "MLI",
+    "MMI", "MMS", "MNR", "MOG", "MPW", "MRC", "MRCY", "MRP", "MSA", "MSM",
+    "MTG", "MTH", "MTUS", "MUR", "MYRG", "NAD", "NARI", "NBR", "NBTB", "NEP",
+    "NEU", "NFG", "NFBK", "NHI", "NI", "NJR", "NNN", "NOG", "NPO", "NRC",
+    "NRG", "NRP", "NSA", "NSP", "NUE", "NUS", "NVR", "NVT", "NWE", "NWL",
+    "NWN", "ODP", "OFG", "OGE", "OGS", "OHI", "OII", "OIS", "OLN", "OMF",
+    "ONB", "OPK", "OPRX", "ORI", "OTTR", "OUT", "OXM", "PAHC", "PARR",
+    "PATK", "PBF", "PBFX", "PBH", "PCAR", "PCH", "PDM", "PDCO", "PEB",
+    "PECO", "PEN", "PENN", "PES", "PFC", "PII", "PINC", "PKG", "POR", "POST",
+    "POWL", "PRGO", "PRIM", "PRK", "PRMW", "PRO", "PRSC", "PSA", "PSMT",
+    "PTVE", "PVH", "PZZA", "RBC", "RCHC", "RCL", "RCM", "RCUS", "RDN",
+    "RES", "REX", "REXR", "RGP", "RIG", "RLAY", "RLI", "RLJ", "RMD", "RMR",
+    "RNG", "RNST", "RNW", "RPM", "RRR", "RS", "RXO", "SAFE", "SAIA", "SANM",
+    "SBH", "SBR", "SBRA", "SCI", "SCSC", "SEE", "SFM", "SFNC", "SHO", "SIG",
+    "SJW", "SKT", "SLG", "SM", "SMAR", "SMG", "SMP", "SNV", "SO", "SONO",
+    "SPB", "SPTN", "SRI", "SSB", "SSBK", "STC", "STEP", "STL", "STNG",
+    "STOR", "SUM", "SWI", "SWK", "SWX", "SXI", "SXT", "SYF", "SYKE", "SYM",
+    "TALO", "TDC", "TDS", "TENB", "TGI", "TGS", "TH", "THG", "THO", "TILE",
+    "TKR", "TMP", "TNL", "TOWN", "TPH", "TPX", "TR", "TREX", "TRMK", "TRN",
+    "TRMR", "TSC", "TTEC", "TTGT", "TUP", "TWI", "TXRH", "TYL", "UCB",
+    "UCTT", "UE", "UFI", "UGI", "UHT", "UIL", "UMBF", "UNF", "UNFI", "UNIT",
+    "UVE", "UVV", "VAC", "VBTX", "VC", "VFC", "VGR", "VHI", "VICR", "VIR",
+    "VLY", "VMI", "VNO", "VOYA", "VPG", "VRE", "VSCO", "VSH", "VVI", "VVV",
+    "WABC", "WAL", "WASH", "WBS", "WD", "WDFC", "WEN", "WETF", "WEX", "WH",
+    "WHD", "WHR", "WKC", "WLK", "WMS", "WOR", "WPM", "WRB", "WS", "WSO",
+    "WTFC", "WTS", "WU", "WWE", "WY", "XPEL", "XRX", "XNCR", "YELP", "YOU",
+    "ZWS",
+]
+
+
+def _load_metadata() -> dict:
+    if METADATA_PATH.exists():
+        age = time.time() - METADATA_PATH.stat().st_mtime
+        if age < 86400:
+            try:
+                return json.loads(METADATA_PATH.read_text())
+            except Exception:
+                return {}
+    return {}
+
+
+def _load_or_build_ticker_list() -> list:
+    sp400_sp600 = [
+        "MMM","AOS","ABT","ABBV","ACN","ADBE","AMD","AES","AFL","A",
+        "APD","ABNB","AKAM","ALB","ARE","ALGN","ALLE","LNT","ALL",
+        "GOOGL","GOOG","MO","AMZN","AMCR","AEE","AAL","AEP","AXP",
+        "AIG","AMT","AWK","AMP","AME","AMGN","APH","ADI","ANSS","AON",
+        "APA","AAPL","AMAT","APTV","ACGL","ADM","ANET","AJG","AIZ",
+        "T","ATO","ADSK","ADP","AZO","AVB","AVY","AXON","BKR","BALL",
+        "BAC","BK","BBWI","BAX","BDX","WRB","BBY","BIO","TECH","BIIB",
+        "BLK","BX","BA","BCF","BSX","BMY","AVGO","BR","BRO","BF-B",
+        "BLDR","BG","CDNS","CZR","CPT","CPB","COF","CAH","KMX","CCL",
+        "CARR","CTLT","CAT","CBOE","CBRE","CDW","CE","COR","CNC","CNX",
+        "CHRW","CRL","SCHW","CHTR","CVX","CMG","CB","CHD","CI","CINF",
+        "CTAS","CSCO","C","CFG","CLX","CME","CMS","KO","CTSH","CL",
+        "CMCSA","CMA","CAG","COP","ED","STZ","CEG","COO","CPRT","GLW",
+        "CTVA","CSGP","COST","CTRA","CCI","CSX","CMI","CVS","DHI",
+        "DHR","DRI","DVA","DAY","DECK","DE","DAL","XRAY","DVN","DXCM",
+        "FANG","DLR","DFS","DG","DLTR","D","DPZ","DOV","DOW","DHR",
+        "DTE","DUK","DD","EMN","ETN","EBAY","ECL","EIX","EW","EA",
+        "ELV","LLY","EMR","ENPH","ETR","EOG","EPAM","EQT","EFX","EQIX",
+        "EQR","ESS","EL","ETSY","EG","EVRG","ES","EXC","EXPE","EXPD",
+        "EXR","XOM","FFIV","FDS","FICO","FAST","FRT","FDX","FIS","FITB",
+        "FSLR","FE","FI","FLT","FMC","F","FTNT","FTV","FOXA","FOX",
+        "BEN","FCX","GRMN","IT","GE","GEHC","GEV","GEN","GNRC","GD",
+        "GIS","GM","GPC","GILD","GPN","GL","GDDY","GS","HAL","HIG",
+        "HAS","HCA","DOC","HSIC","HSY","HES","HPE","HLT","HOLX","HD",
+        "HON","HRL","HST","HWM","HPQ","HUBB","HUM","HBAN","HII","IBM",
+        "IEX","IDXX","ITW","INCY","IR","PODD","INTC","ICE","IFF","IP",
+        "IPG","INTU","ISRG","IVZ","INVH","IQV","IRM","JBHT","JBL",
+        "JKHY","J","JNJ","JCI","JPM","JNPR","K","KVUE","KDP","KEY",
+        "KEYS","KMB","KIM","KMI","KLAC","KHC","KR","LHX","LH","LRCX",
+        "LW","LVS","LDOS","LEN","LNC","LIN","LYV","LKQ","LMT","L",
+        "LOW","LULU","LYB","MTB","MRO","MPC","MKTX","MAR","MMC","MLM",
+        "MAS","MA","MTCH","MKC","MCD","MCK","MDT","MRK","META","MET",
+        "MTD","MGM","MCHP","MU","MSFT","MAA","MRNA","MHK","MOH","TAP",
+        "MDLZ","MPWR","MNST","MCO","MS","MOS","MSI","MSCI","NDAQ",
+        "NTAP","NFLX","NEM","NWSA","NWS","NEE","NKE","NI","NDSN","NSC",
+        "NTRS","NOC","NCLH","NRG","NUE","NVDA","NVR","NXPI","ORLY",
+        "OXY","ODFL","OMC","ON","OKE","ORCL","OTIS","PCAR","PKG","PANW",
+        "PH","PAYX","PAYC","PYPL","PNR","PEP","PFE","PCG","PM","PSX",
+        "PNW","PXD","PNC","POOL","PPG","PPL","PFG","PG","PGR","PLD",
+        "PRU","PEG","PTC","PSA","PHM","QRVO","PWR","QCOM","DGX","RL",
+        "RJF","RTX","O","REG","REGN","RF","RSG","RMD","RVTY","ROK",
+        "ROL","ROP","ROST","RCL","SPGI","CRM","SBAC","SLB","STX","SRE",
+        "NOW","SHW","SPG","SWKS","SJM","SNA","SOLV","SO","LUV","SWK",
+        "SBUX","STT","STLD","STE","SYK","SMCI","SYF","SNPS","SYY",
+        "TMUS","TROW","TTWO","TPR","TRGP","TGT","TEL","TDY","TFX",
+        "TER","TSLA","TXN","TXT","TMO","TJX","TSCO","TT","TDG","TRV",
+        "TRMB","TFC","TYL","TSN","USB","UDR","ULTA","UNP","UAL","UPS",
+        "URI","UNH","UHS","VLO","VTR","VLTO","VRSN","VRSK","VZ","VRTX",
+        "VTRS","VICI","V","VST","VNO","VMC","WRK","WAB","WMT","WBD",
+        "WM","WAT","WEC","WFC","WELL","WST","WDC","WY","WHR","WMB",
+        "WTW","GWW","WYNN","XEL","XYL","YUM","ZBRA","ZBH","ZTS",
+        # S&P 400 Mid-Cap
+        "AAN","ACC","ACHC","ACIW","ACM","ADNT","AEO","AFG","AGCO",
+        "AGL","AIRC","AIN","AIR","ALE","ALGM","ALKS","ALLE","ALV",
+        "AMCX","AMG","AMKR","AMNB","AMR","AMRC","AMSF","AN","ANGI",
+        "ANF","APA","APAM","APG","APOG","APPF","APRI","ARI","ARW",
+        "ASB","ASH","ASGN","ASTE","ATI","ATNI","ATRC","AUB","AVA",
+        "AVNT","AWI","AX","AXNX","AXS","AZPN","B","BCO","BECN","BFH",
+        "BFIN","BGC","BHF","BJ","BLKB","BLD","BMI","BPOP","BRC","BRX",
+        "BSIG","BURL","BWXT","BY","BYD","CABO","CADE","CAKE","CALM",
+        "CARG","CBT","CCCS","CEIX","CHE","CHEF","CHRD","CIR","CKH",
+        "CLAR","CLH","CLVT","CMCO","CMP","CNO","CNXN","CNX","COHU",
+        "COLM","CONE","COOP","CORT","CPF","CPRX","CRC","CROX","CRS",
+        "CRVL","CSL","CSWC","CTRE","CUZ","CW","DAN","DBD","DCI","DCO",
+        "DCP","DFIN","DKS","DLB","DORM","DRH","DRQ","DY","EAT","EBTC",
+        "EFC","EGP","EHC","ELAN","ELF","ENOV","ENS","ENSG","EPAC",
+        "ESE","ESNT","ESSA","ESTC","EVI","EXP","EXPI","FAF","FBP",
+        "FCEL","FCFS","FCF","FG","FHB","FHI","FLO","FLR","FLY","FNB",
+        "FND","FNF","FOR","FORM","FOUR","FR","FUL","GEO","GKOS","GLT",
+        "GLTR","GNRC","GNW","GPOR","GRC","GRX","GT","GTLS","GVA","H",
+        "HAE","HAYW","HBI","HCAT","HCC","HCI","HCSG","HHH","HI","HIW",
+        "HLF","HMN","HMST","HNST","HOG","HOMB","HOME","HPP","HR","HRI",
+        "HUBG","HUN","IAA","IART","IBP","IDCC","IDEX","INN","INSM",
+        "ITGR","JACK","JELD","JHG","JLL","JOBY","JWN","KBH","KFRC",
+        "KFY","KNF","KNX","KRC","KRG","KSS","KTB","KTOS","LGF-A",
+        "LGF-B","LHX","LKQ","LMAT","LNC","LNW","LOPE","LPX","LRN",
+        "LSTR","LTC","LXP","M","MAC","MAN","MATW","MBC","MBWM","MC",
+        "MCRI","MD","MDU","MHO","MMS","MMSI","MODG","MOR","MOV","MP",
+        "MPLX","MRC","MRCY","MSEX","MTG","MTN","MTZ","MUR","NARI",
+        "NBR","NEO","NEOG","NFG","NFBK","NJR","NNN","NOMD","NPO","NWE",
+        "NWSA","OFG","OGE","OGS","OI","OII","OLN","OMCL","OMF","ONB",
+        "ORA","OSK","OUT","OZK","PABI","PAG","PAHC","PATK","PAYO",
+        "PBF","PBH","PBPB","PCH","PDCE","PEBO","PENN","PII","PINC",
+        "PIPR","PJT","PLAY","PLXS","PNFP","PNM","POOL","POST","PPBI",
+        "PRG","PRGO","PRGS","PRIM","PRK","PSMT","PTC","PTCT","PUMP",
+        "PVH","R","RBC","REXR","RGLD","RHP","RIG","RLI","RNR","ROAD",
+        "RXO","SBH","SBRA","SCSC","SEIC","SF","SFM","SG","SHAK","SHO",
+        "SIG","SITC","SKT","SKX","SLG","SM","SMAR","SMG","SNDR","SNV",
+        "SPSC","SPT","SRI","SS","SSYS","STAG","STRA","SUM","SWN","SWX",
+        "SYNA","TALO","TBBK","TCF","TCBI","TDS","TFSL","THO","THR",
+        "TKR","TMP","TNET","TNL","TOWN","TPH","TRMK","TRNO","TRN",
+        "TROW","TRS","TSEM","TTC","TVTX","TWI","TXRH","UCBI","UFPI",
+        "UGI","UMBF","UMPQ","UNFI","UNIT","URBN","USLM","USPH","UTL",
+        "VCEL","VFC","VIPS","VLY","VMI","VNT","VOYA","VRE","VSCO",
+        "WAFD","WAL","WASH","WD","WEN","WERN","WEX","WGO","WINA","WK",
+        "WLK","WMS","WOLF","WOR","WPC","WS","WTFC","WWE","X","XHR",
+        "XPEL","XPO","YELP","ZI","ZION"
+    ]
+    tickers = list(dict.fromkeys(sp400_sp600))
+    print(f"[scanner] using {len(tickers)} hardcoded S&P 400+600 tickers")
+    return tickers
+
+
+ALL_TICKERS = _load_or_build_ticker_list()
+
+
+def _fetch_and_save_metadata(tickers):
+    result = {}
+    batches = [tickers[i : i + 20] for i in range(0, len(tickers), 20)]
+    for i, batch in enumerate(batches):
+        for ticker in batch:
+            try:
+                t = yf.Ticker(ticker)
+                info = t.info
+                hist = t.history(period="3mo", interval="1d").dropna()
+                last = float(hist["Close"].iloc[-1]) if len(hist) > 0 else None
+                result[ticker] = {
+                    "name": info.get("shortName") or info.get("longName") or ticker,
+                    "market_cap": info.get("marketCap"),
+                    "roe": (info.get("returnOnEquity") or 0) * 100,
+                    "change_15d": (last / float(hist["Close"].iloc[-15]) - 1) * 100
+                    if last and len(hist) >= 15
+                    else None,
+                    "change_1m": (last / float(hist["Close"].iloc[-21]) - 1) * 100
+                    if last and len(hist) >= 21
+                    else None,
+                    "change_3m": (last / float(hist["Close"].iloc[-63]) - 1) * 100
+                    if last and len(hist) >= 63
+                    else None,
+                }
+                with _scanner_cache_lock:
+                    data = {**result[ticker], "ticker": ticker}
+                    existing = next(
+                        (x for x in _scanner_cache
+                         if x.get('ticker') == data.get('ticker')),
+                        None
+                    )
+                    if existing:
+                        existing.update(data)
+                    else:
+                        _scanner_cache.append(data)
+            except Exception as e:
+                print(f"[metadata] {ticker} failed: {e}")
+        print(f"[metadata] batch {i + 1}/{len(batches)} done")
+        time.sleep(2)
+    try:
+        _APP_DATA.mkdir(parents=True, exist_ok=True)
+        METADATA_PATH.write_text(json.dumps(result))
+        print("[metadata] saved to disk")
+    except Exception as e:
+        print(f"[metadata] save failed: {e}")
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -196,7 +416,11 @@ def _bulk_fetch_signals(tickers: list[str]) -> dict:
         # Handle single ticker case
         if len(tickers) == 1:
             df = data.copy()
-            df.columns = [c.lower() for c in df.columns]
+            df.columns = [
+                (c[1].lower() if len(c) > 1 else c[0].lower())
+                if isinstance(c, tuple) else c.lower()
+                for c in df.columns
+            ]
             df = df.dropna()
             if not df.empty:
                 try:
@@ -208,6 +432,8 @@ def _bulk_fetch_signals(tickers: list[str]) -> dict:
                     ml_result = predict_signal(features_to_ml_array(features))
                     signal = ml_result["signal"]
                     confidence = ml_result["confidence"]
+                    if signal in ("BUY", "SELL") and confidence < 65:
+                        signal = "HOLD"
                     results[tickers[0]] = {
                         "signal": signal,
                         "confidence": confidence,
@@ -246,7 +472,10 @@ def _bulk_fetch_signals(tickers: list[str]) -> dict:
                 return None
             try:
                 df = data[ticker].copy()
-                df.columns = [c.lower() for c in df.columns]
+                df.columns = [
+                c[0].lower() if isinstance(c, tuple) else c.lower()
+                for c in df.columns
+            ]
                 df = df.dropna()
                 if df.empty or len(df) < 10:
                     return None
@@ -255,9 +484,13 @@ def _bulk_fetch_signals(tickers: list[str]) -> dict:
                 price = float(latest["close"])
                 features = _extract_features_from_row(latest, price)
                 ml_result = predict_signal(features_to_ml_array(features))
+                raw_signal = ml_result["signal"]
+                raw_confidence = ml_result["confidence"]
+                if raw_signal in ("BUY", "SELL") and raw_confidence < 65:
+                    raw_signal = "HOLD"
                 return ticker, {
-                    "signal": ml_result["signal"],
-                    "confidence": ml_result["confidence"],
+                    "signal": raw_signal,
+                    "confidence": raw_confidence,
                     "price": price,
                     "df": df
                 }
@@ -396,6 +629,9 @@ def _quick_signal(ticker: str) -> dict:
         rsi = _safe_float(indicators.get("RSI"), 50)
         vol_ratio = _safe_float(indicators.get("vol_ratio"), 1)
         ma_trend = str(indicators.get("MA_trend", "") or "")
+        ma5 = _safe_float(indicators.get("MA5"), None)
+        ma10 = _safe_float(indicators.get("MA10"), None)
+        ma20 = _safe_float(indicators.get("MA20"), None)
         ma_bias = (
             "bullish" if "bullish" in ma_trend.lower() or "above" in ma_trend.lower()
             else "bearish"
@@ -423,6 +659,9 @@ def _quick_signal(ticker: str) -> dict:
                 "rsi": round(rsi, 1),
                 "vol_ratio": round(vol_ratio, 2),
                 "ma_trend": ma_bias,
+                "ma5": ma5,
+                "ma10": ma10,
+                "ma20": ma20,
                 "conclusion": result.get("conclusion", ""),
                 **extras,
             }
@@ -435,6 +674,9 @@ def _quick_signal(ticker: str) -> dict:
             "rsi": round(rsi, 1),
             "vol_ratio": round(vol_ratio, 2),
             "ma_trend": ma_bias,
+            "ma5": ma5,
+            "ma10": ma10,
+            "ma20": ma20,
             "conclusion": result.get("conclusion", ""),
             **extras,
         }
@@ -449,38 +691,100 @@ def _quick_signal(ticker: str) -> dict:
 
 
 def _run_background_scan():
-    """Runs full scan using _quick_signal() (analyze_live + extras).
-    Stores result in _scanner_cache. Repeats every 10 minutes."""
-    global _scanner_cache, _scanner_last_updated
     while True:
         try:
-            print(f"[scanner] background scan starting — {len(ALL_TICKERS)} tickers...")
+            print(f"[scanner] background scan starting — "
+                  f"{len(ALL_TICKERS)} tickers...")
             start = _time.time()
-            results = []
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {
-                    executor.submit(_quick_signal, ticker): ticker
-                    for ticker in ALL_TICKERS
-                }
-                for future in as_completed(futures):
-                    ticker = futures[future]
-                    try:
-                        data = future.result(timeout=30)
-                    except Exception as e:
-                        print(f"[scanner] {ticker} failed: {e}")
-                        data = None
-                    if data:
-                        results.append(data)
+            batches = [ALL_TICKERS[i:i+25]
+                      for i in range(0, len(ALL_TICKERS), 25)]
+
+            for i, batch in enumerate(batches):
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {
+                        executor.submit(_quick_signal, ticker): ticker
+                        for ticker in batch
+                    }
+                    for future in as_completed(futures):
+                        ticker = futures[future]
+                        try:
+                            data = future.result(timeout=45)
+                        except Exception as e:
+                            print(f"[scanner] {ticker} failed: {e}")
+                            data = None
+                        if data:
+                            signal = data.get("signal", "HOLD")
+                            confidence = data.get("confidence", 0)
+                            if signal in ("BUY", "SELL") and confidence < 65:
+                                data["signal"] = "HOLD"
+                            if data and data.get("price") is not None:
+                                with _scanner_cache_lock:
+                                    existing = next(
+                                        (x for x in _scanner_cache
+                                         if x.get('ticker') == data.get('ticker')),
+                                        None
+                                    )
+                                    if existing:
+                                        existing.update(data)
+                                    else:
+                                        _scanner_cache.append(data)
+                            elif data and data.get("price") is None:
+                                print(f"[scanner] {data.get('ticker')} skipped — no price data")
+
+                # Set ready after first batch so UI loads fast
+                if i == 0:
+                    with _scanner_cache_lock:
+                        cached_count = len(_scanner_cache)
+                    _scanner_cache_ready.set()
+                    print(f"[scanner] first batch ready — "
+                          f"{cached_count} tickers cached")
+
+                with _scanner_cache_lock:
+                    cached_count = len(_scanner_cache)
+                print(f"[scanner] batch {i+1}/{len(batches)} done, "
+                      f"{cached_count} tickers so far")
+
+                # Pause between batches to avoid rate limiting
+                if i < len(batches) - 1:
+                    _time.sleep(8)
+
+            # Apply metadata from disk cache
+            cached_meta = _load_metadata()
+            if cached_meta:
+                with _scanner_cache_lock:
+                    for item in _scanner_cache:
+                        t = item.get("ticker")
+                        if t and t in cached_meta:
+                            item.update({
+                                k: cached_meta[t][k]
+                                for k in ["name", "market_cap",
+                                         "roe", "change_15d",
+                                         "change_1m", "change_3m"]
+                                if k in cached_meta[t]
+                            })
+                print("[metadata] applied from disk cache")
+            else:
+                threading.Thread(
+                    target=_fetch_and_save_metadata,
+                    args=(list(ALL_TICKERS),),
+                    daemon=True,
+                ).start()
+                print("[metadata] fetching in background...")
+
+            global _scan_complete
+            _scan_complete = True
+            print("[scanner] scan marked complete")
+
             with _scanner_cache_lock:
-                _scanner_cache = results
-                _scanner_last_updated = _time.time()
-            _scanner_cache_ready.set()
+                cached_count = len(_scanner_cache)
             elapsed = _time.time() - start
-            print(f"[scanner] background scan done in {elapsed:.1f}s — "
-                  f"{len(results)} tickers cached")
+            print(f"[scanner] scan complete in {elapsed:.1f}s — "
+                  f"{cached_count} tickers cached")
+
         except Exception as e:
-            print(f"[scanner] background scan error: {e}")
-        _time.sleep(600)  # repeat every 10 minutes
+            print(f"[scanner] scan error: {e}")
+
+        _time.sleep(900)
 
 
 # Start background scan on import

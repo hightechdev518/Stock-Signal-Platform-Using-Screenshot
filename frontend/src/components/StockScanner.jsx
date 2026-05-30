@@ -107,31 +107,46 @@ function Sparkline({ data }) {
   )
 }
 
-function StockTable({ stocks, onSelect, selectedTickers = new Set(), onToggle }) {
+function StockTable({ stocks, onSelect, selectedTickers = new Set(), onToggle, sortConfig = { key: null, direction: 'asc' }, onSort }) {
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       <table className="w-full min-w-max border-collapse text-[12px]">
-        <thead className="sticky top-0 z-10 bg-terminal-panel border-b border-terminal-border">
-          <tr className="text-terminal-muted text-left">
+        <thead>
+          <tr className="text-left text-[11px] text-terminal-muted border-b border-terminal-border sticky top-0 bg-[#0a0a0a] z-10">
             <th className="px-2 py-1.5 w-6"></th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap">Symbol</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap">Name</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap">Signal</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap">Sparkline</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Price</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Change</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">% Change</th>
-            {PERIOD_PCT_FIELDS.map(({ header }) => (
-              <th key={header} className="px-2 py-1.5 font-medium whitespace-nowrap text-right">
-                {header}
+            {[
+              { label: 'Symbol', key: 'ticker' },
+              { label: 'Name', key: 'name' },
+              { label: 'Signal', key: 'signal' },
+              { label: 'Sparkline', key: null },
+              { label: 'Price', key: 'price' },
+              { label: 'Change', key: 'change' },
+              { label: '% Change', key: 'change_pct' },
+              { label: '3D %', key: 'change_3d' },
+              { label: '1W %', key: 'change_1w' },
+              { label: '15D %', key: 'change_15d' },
+              { label: '1M %', key: 'change_1m' },
+              { label: '3M %', key: 'change_3m' },
+              { label: 'Prev Close', key: 'prev_close' },
+              { label: 'Open', key: 'open' },
+              { label: 'High', key: 'high' },
+              { label: 'Low', key: 'low' },
+              { label: 'Volume', key: 'volume' },
+              { label: 'Market Cap', key: 'market_cap' },
+            ].map(({ label, key }) => (
+              <th
+                key={label}
+                className={`px-2 py-1.5 whitespace-nowrap ${key ? 'cursor-pointer hover:text-terminal-accent select-none' : ''}`}
+                onClick={() => key && onSort(key)}
+              >
+                {label}
+                {key && sortConfig.key === key && (
+                  <span className="ml-1">
+                    {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                  </span>
+                )}
               </th>
             ))}
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Prev Close</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Open</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">High</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Low</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Volume</th>
-            <th className="px-2 py-1.5 font-medium whitespace-nowrap text-right">Market Cap</th>
           </tr>
         </thead>
         <tbody>
@@ -219,250 +234,64 @@ function StockTable({ stocks, onSelect, selectedTickers = new Set(), onToggle })
 
 const scannerCache = {}
 
-const DEFAULT_FILTERS = {
-  minCap: 0,
-  maxCap: '',
-  minRoe: 0,
-  maxRoe: '',
-  maConditions: {
-    bullish: false,
-    bearish: false,
-    strongBullish: false,
-    strongBearish: false,
-  },
+const DEFAULT_TABLE_FILTERS = {
+  marketCapMin: 0,
+  marketCapMax: 999,
+  roeMin: -9999,
+  roeMax: 9999,
+  maFilter: 'off',
 }
 
-function noMaxLimit(max) {
-  return max === '' || max == null || Number(max) === 0
+const passesTableMarketCap = (stock, marketCapMin, marketCapMax) => {
+  if (stock.market_cap == null ||
+      stock.market_cap === undefined ||
+      stock.market_cap === "" ||
+      stock.market_cap === 0) return true
+  const mc = Number(stock.market_cap)
+  if (isNaN(mc)) return true
+  const minRaw = Number(marketCapMin) * 1_000_000_000
+  const maxRaw = Number(marketCapMax) * 1_000_000_000
+  return mc >= minRaw && mc <= maxRaw
 }
 
-function getMaTrendText(stock) {
-  return String(stock.ma_trend_label || stock.ma_trend || '').toLowerCase()
+const passesTableRoe = (stock, roeMin, roeMax) => {
+  if (stock.roe == null) return true
+  const roe = Number(stock.roe)
+  return roe >= Number(roeMin) && roe <= Number(roeMax)
 }
 
-function passesMarketCap(stock, filters) {
-  const cap = stock.market_cap ? Number(stock.market_cap) : null
-  if (cap === null) return true
-  const minVal = (Number(filters.minCap) || 0) * 1_000_000_000
-  if (cap < minVal) return false
-  if (!noMaxLimit(filters.maxCap)) {
-    const maxVal = Number(filters.maxCap) * 1_000_000_000
-    if (cap > maxVal) return false
-  }
-  return true
+function passesTableMaFilter(stock, maFilter) {
+  if (maFilter === 'off') return true
+  const price = Number(stock.price)
+  if (Number.isNaN(price)) return true
+
+  const maKey = { ma5: 'ma5', ma10: 'ma10', ma20: 'ma20' }[maFilter]
+  if (!maKey) return true
+
+  const maVal = stock[maKey]
+  if (maVal == null) return true
+  const ma = Number(maVal)
+  if (Number.isNaN(ma)) return true
+  return price > ma
 }
 
-function passesRoe(stock, filters) {
-  // ROE filter - only apply to stocks with valid ROE data
-  if (stock.roe != null && stock.roe > 0) {
-    const maxRoe = filters.maxRoe > 0 ? filters.maxRoe : Infinity
-    if (stock.roe < filters.minRoe || stock.roe > maxRoe) return false
-  }
-  return true
-}
+function applyTableFilters(stocks, { marketCapMin, marketCapMax, roeMin, roeMax, maFilter }) {
+  const isDefaultFilters =
+    (marketCapMin === 0 || marketCapMin === '0') &&
+    (marketCapMax === 999 || marketCapMax === '999') &&
+    (roeMin === -9999 || roeMin === '-9999') &&
+    (roeMax === 9999 || roeMax === '9999') &&
+    (maFilter === 'off' || maFilter === 'Off')
 
-function passesMa(stock, filters) {
-  const { maConditions } = filters
-  const any = Object.values(maConditions).some(Boolean)
-  if (!any) return true
-
-  const t = getMaTrendText(stock)
-  const checks = []
-
-  if (maConditions.bullish) {
-    checks.push(
-      (t.includes('above all') && t.includes('bullish') && !t.includes('strong')) ||
-      t === 'bullish'
-    )
-  }
-  if (maConditions.bearish) {
-    checks.push(
-      (t.includes('below all') && t.includes('bearish') && !t.includes('strong')) ||
-      (t === 'bearish' && !t.includes('strong'))
-    )
-  }
-  if (maConditions.strongBullish) {
-    checks.push(t.includes('strong bullish'))
-  }
-  if (maConditions.strongBearish) {
-    checks.push(t.includes('strong bearish'))
+  if (isDefaultFilters) {
+    return stocks
   }
 
-  return checks.some(Boolean)
-}
-
-function filterStocks(stocks, filters) {
   return stocks.filter(
     (stock) =>
-      passesMarketCap(stock, filters) &&
-      passesRoe(stock, filters) &&
-      passesMa(stock, filters)
-  )
-}
-
-function FilterPanel({ stocks, filters, onChange, onReset }) {
-  const [maDropdownOpen, setMaDropdownOpen] = useState(false)
-  const maDropdownRef = useRef(null)
-
-  const inputClass =
-    'w-16 px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-[11px] text-gray-200 focus:border-terminal-accent outline-none'
-
-  const capMatches = stocks.filter((s) => passesMarketCap(s, filters)).length
-  const roeMatches = stocks.filter((s) => passesRoe(s, filters)).length
-  const maMatches = stocks.filter((s) => passesMa(s, filters)).length
-
-  const selectedMaConditions = Object.values(filters.maConditions).filter(Boolean)
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (maDropdownRef.current &&
-          !maDropdownRef.current.contains(e.target)) {
-        setMaDropdownOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener(
-      'mousedown', handleClickOutside
-    )
-  }, [])
-
-  const rowClass =
-    'flex items-center gap-3 px-3 py-2.5 text-[11px] border-b border-terminal-border/60 last:border-b-0'
-
-  return (
-    <div className="shrink-0 bg-[#141414] border border-terminal-border rounded overflow-visible">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-terminal-border/60">
-        <span className="text-[11px] font-semibold text-terminal-accent uppercase tracking-wide">
-          Filters
-        </span>
-        <button
-          type="button"
-          onClick={onReset}
-          className="text-[11px] px-2 py-0.5 border border-terminal-border rounded text-terminal-muted hover:text-terminal-accent hover:border-terminal-accent transition-colors"
-        >
-          Reset
-        </button>
-      </div>
-
-      <div className={rowClass}>
-        <span className="text-terminal-muted shrink-0 w-20">Market Cap</span>
-        <div className="flex items-center gap-1.5 flex-1">
-          <input
-            type="number"
-            step="0.01"
-            value={filters.minCap}
-            onChange={(e) => onChange({ ...filters, minCap: Number(e.target.value) })}
-            className={inputClass}
-          />
-          <span className="text-gray-500">B</span>
-          <span className="text-gray-600">to</span>
-          <input
-            type="number"
-            step="0.01"
-            value={filters.maxCap}
-            placeholder="No limit"
-            onChange={(e) => onChange({ ...filters, maxCap: e.target.value })}
-            className={inputClass}
-          />
-          <span className="text-gray-500">B</span>
-        </div>
-        <span className="text-terminal-accent shrink-0 whitespace-nowrap">
-          Matches: {capMatches}
-        </span>
-      </div>
-
-      <div className={rowClass}>
-        <span className="text-terminal-muted shrink-0 w-20">ROE</span>
-        <div className="flex items-center gap-1.5 flex-1">
-          <input
-            type="number"
-            step="0.1"
-            value={filters.minRoe}
-            onChange={(e) => onChange({ ...filters, minRoe: Number(e.target.value) })}
-            className={inputClass}
-          />
-          <span className="text-gray-500">%</span>
-          <span className="text-gray-600">to</span>
-          <input
-            type="number"
-            step="0.1"
-            value={filters.maxRoe}
-            placeholder="No limit"
-            onChange={(e) => onChange({ ...filters, maxRoe: e.target.value })}
-            className={inputClass}
-          />
-          <span className="text-gray-500">%</span>
-        </div>
-        <span className="text-terminal-accent shrink-0 whitespace-nowrap">
-          Matches: {roeMatches}
-        </span>
-      </div>
-
-      <div className={rowClass}>
-        <span className="text-terminal-muted shrink-0 w-20">MA</span>
-        <div ref={maDropdownRef} style={{ position: 'relative' }} className="flex-1">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              console.log('MA button clicked, current state:', maDropdownOpen)
-              setMaDropdownOpen((prev) => !prev)
-              console.log('MA dropdown should now be:', !maDropdownOpen)
-            }}
-            className="w-full text-left px-2 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 hover:border-terminal-accent transition-colors"
-          >
-            {selectedMaConditions.length} condition(s) &gt;
-          </button>
-          {maDropdownOpen && (
-            <div
-              style={{
-                position: 'absolute',
-                zIndex: 9999,
-                background: '#1a1f2e',
-                border: '1px solid #2a3040',
-                borderRadius: '4px',
-                padding: '8px',
-                minWidth: '200px',
-                top: '100%',
-                left: 0,
-                marginTop: '4px',
-              }}
-            >
-              {[
-                { key: 'bullish', label: 'Bullish' },
-                { key: 'bearish', label: 'Bearish' },
-                { key: 'strongBullish', label: 'Strong Bullish' },
-                { key: 'strongBearish', label: 'Strong Bearish' },
-              ].map(({ key, label }) => (
-                <label
-                  key={key}
-                  className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-gray-100 py-0.5"
-                >
-                  <input
-                    type="checkbox"
-                    checked={filters.maConditions[key]}
-                    onChange={(e) =>
-                      onChange({
-                        ...filters,
-                        maConditions: {
-                          ...filters.maConditions,
-                          [key]: e.target.checked,
-                        },
-                      })
-                    }
-                    className="accent-terminal-accent"
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-        <span className="text-terminal-accent shrink-0 whitespace-nowrap">
-          Matches: {maMatches}
-        </span>
-      </div>
-    </div>
+      passesTableMarketCap(stock, marketCapMin, marketCapMax) &&
+      passesTableRoe(stock, roeMin, roeMax) &&
+      passesTableMaFilter(stock, maFilter)
   )
 }
 
@@ -472,8 +301,6 @@ export default function StockScanner({ onSelectTicker }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
-  const [filtersOpen, setFiltersOpen] = useState(false)
-  const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const fetchingRef = useRef(false)
   const [folders, setFolders] = useState(() => {
     try {
@@ -486,6 +313,27 @@ export default function StockScanner({ onSelectTicker }) {
   const [selectedTickers, setSelectedTickers] = useState(new Set())
   const [showFolderMenu, setShowFolderMenu] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' })
+
+  const [marketCapMin, setMarketCapMin] = useState(DEFAULT_TABLE_FILTERS.marketCapMin)
+  const [marketCapMax, setMarketCapMax] = useState(DEFAULT_TABLE_FILTERS.marketCapMax)
+  const [roeMin, setRoeMin] = useState(DEFAULT_TABLE_FILTERS.roeMin)
+  const [roeMax, setRoeMax] = useState(DEFAULT_TABLE_FILTERS.roeMax)
+  const [maFilter, setMaFilter] = useState(DEFAULT_TABLE_FILTERS.maFilter)
+
+  const [scanComplete, setScanComplete] = useState(false)
+  const [totalCached, setTotalCached] = useState(0)
+  const prevCountRef = useRef(0)
+  const stableCountRef = useRef(0)
+  const autoRefreshRef = useRef(null)
+
+  const handleSort = (key) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }))
+  }
 
   const saveFolders = (updated) => {
     setFolders(updated)
@@ -528,13 +376,38 @@ export default function StockScanner({ onSelectTicker }) {
     })
   }
 
+  const resetTableFilters = () => {
+    setMarketCapMin(DEFAULT_TABLE_FILTERS.marketCapMin)
+    setMarketCapMax(DEFAULT_TABLE_FILTERS.marketCapMax)
+    setRoeMin(DEFAULT_TABLE_FILTERS.roeMin)
+    setRoeMax(DEFAULT_TABLE_FILTERS.roeMax)
+    setMaFilter(DEFAULT_TABLE_FILTERS.maFilter)
+  }
+
   const filteredStocks = useMemo(() => {
     let base = stocks
     if (activeFolder && folders[activeFolder]) {
-      base = stocks.filter((s) => folders[activeFolder].includes(s.ticker))
+      base = stocks.filter(s => 
+        folders[activeFolder].includes(s.ticker)
+      )
     }
-    return filterStocks(base, filters)
-  }, [stocks, filters, activeFolder, folders])
+    let sorted = ['gainers', 'losers', 'active'].includes(category)
+      ? base
+      : applyTableFilters(base, { marketCapMin, marketCapMax, roeMin, roeMax, maFilter })
+    if (sortConfig.key) {
+      sorted = [...sorted].sort((a, b) => {
+        const aVal = a[sortConfig.key] ?? -Infinity
+        const bVal = b[sortConfig.key] ?? -Infinity
+        if (typeof aVal === 'string') {
+          return sortConfig.direction === 'asc'
+            ? aVal.localeCompare(bVal)
+            : bVal.localeCompare(aVal)
+        }
+        return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal
+      })
+    }
+    return sorted
+  }, [stocks, activeFolder, folders, sortConfig, category, marketCapMin, marketCapMax, roeMin, roeMax, maFilter])
 
   const fetchScanner = async (cat, forceRefresh = false) => {
     const cache = scannerCache[cat]
@@ -620,6 +493,45 @@ export default function StockScanner({ onSelectTicker }) {
     fetchAll()
   }, [])
 
+  useEffect(() => {
+    const startTime = Date.now()
+
+    autoRefreshRef.current = setInterval(async () => {
+      if (Date.now() - startTime > 3600000) {
+        clearInterval(autoRefreshRef.current)
+        return
+      }
+      await fetchScanner('all', true)
+      try {
+        const statusRes = await fetch(
+          'http://127.0.0.1:8000/scanner/status'
+        )
+        const status = await statusRes.json()
+        if (!status.scanning) {
+          setScanComplete(true)
+          clearInterval(autoRefreshRef.current)
+        }
+      } catch(e) {}
+      setTotalCached(prev => {
+        const current = stocks.length
+        if (current === prevCountRef.current) {
+          stableCountRef.current += 1
+          if (stableCountRef.current >= 5 && stocks.length >= 100) {
+            setScanComplete(true)
+            clearInterval(autoRefreshRef.current)
+          }
+        } else {
+          stableCountRef.current = 0
+          setScanComplete(false)
+        }
+        prevCountRef.current = current
+        return current
+      })
+    }, 20000)
+
+    return () => clearInterval(autoRefreshRef.current)
+  }, [])
+
   return (
     <div className="flex flex-col h-full min-h-0 gap-2">
       <div className="shrink-0 flex items-center justify-between">
@@ -630,17 +542,6 @@ export default function StockScanner({ onSelectTicker }) {
           {lastUpdated && (
             <span className="text-[11px] text-gray-500">Updated {lastUpdated}</span>
           )}
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((open) => !open)}
-            className={`text-[11px] px-2 py-1 border rounded transition-colors ${
-              filtersOpen
-                ? 'border-terminal-accent text-terminal-accent bg-terminal-accent/10'
-                : 'border-terminal-border text-terminal-muted hover:text-terminal-accent hover:border-terminal-accent'
-            }`}
-          >
-            Filters
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -759,15 +660,6 @@ export default function StockScanner({ onSelectTicker }) {
         )}
       </div>
 
-      {filtersOpen && (
-        <FilterPanel
-          stocks={stocks}
-          filters={filters}
-          onChange={setFilters}
-          onReset={() => setFilters(DEFAULT_FILTERS)}
-        />
-      )}
-
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {loading && (
           <div className="flex flex-col items-center justify-center h-full gap-3">
@@ -789,14 +681,100 @@ export default function StockScanner({ onSelectTicker }) {
         )}
         {!loading && !error && stocks.length > 0 && (
           <>
-            <p className="shrink-0 text-[11px] text-terminal-muted px-1">
-              Showing {filteredStocks.length} of {stocks.length} stocks
-            </p>
+            <div className="shrink-0 flex flex-wrap items-center gap-x-4 gap-y-2 px-2 py-1.5 bg-[#141414] border border-terminal-border rounded text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <span className="text-terminal-muted whitespace-nowrap">Market Cap</span>
+                <label className="flex items-center gap-1 text-gray-400">
+                  <span>Min $B</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={marketCapMin}
+                    onChange={(e) => setMarketCapMin(Number(e.target.value))}
+                    className="w-14 px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 focus:border-terminal-accent outline-none"
+                  />
+                </label>
+                <label className="flex items-center gap-1 text-gray-400">
+                  <span>Max $B</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={marketCapMax}
+                    placeholder="No limit"
+                    onChange={(e) => setMarketCapMax(Number(e.target.value))}
+                    className="w-14 px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 focus:border-terminal-accent outline-none"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-terminal-muted whitespace-nowrap">ROE</span>
+                <label className="flex items-center gap-1 text-gray-400">
+                  <span>Min %</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={roeMin}
+                    placeholder="No limit"
+                    onChange={(e) => setRoeMin(Number(e.target.value))}
+                    className="w-14 px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 focus:border-terminal-accent outline-none"
+                  />
+                </label>
+                <label className="flex items-center gap-1 text-gray-400">
+                  <span>Max %</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={roeMax}
+                    placeholder="No limit"
+                    onChange={(e) => setRoeMax(Number(e.target.value))}
+                    className="w-14 px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 focus:border-terminal-accent outline-none"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-terminal-muted whitespace-nowrap">MA Filter</span>
+                <select
+                  value={maFilter}
+                  onChange={(e) => setMaFilter(e.target.value)}
+                  className="px-1.5 py-0.5 bg-[#0d0d0d] border border-terminal-border rounded text-gray-200 focus:border-terminal-accent outline-none"
+                >
+                  <option value="off">Off</option>
+                  <option value="ma5">Above MA5</option>
+                  <option value="ma10">Above MA10</option>
+                  <option value="ma20">Above MA20</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={resetTableFilters}
+                className="text-[11px] px-2 py-0.5 border border-terminal-border rounded text-terminal-muted hover:text-terminal-accent hover:border-terminal-accent transition-colors"
+              >
+                Reset
+              </button>
+            </div>
+            <div className="shrink-0 text-[11px] text-terminal-muted px-1">
+              <div style={{ marginBottom: '6px' }}>
+                {stocks.length > 0 && !scanComplete ? (
+                  <span style={{ color: '#00ccff' }}>
+                    ⟳ Scanning... {stocks.length} stocks loaded
+                  </span>
+                ) : stocks.length > 0 && scanComplete ? (
+                  <span style={{ color: '#00ff88', fontWeight: 'bold' }}>
+                    ✓ Scan complete — {stocks.length} stocks
+                  </span>
+                ) : null}
+              </div>
+              <div>
+                Showing {filteredStocks.length} of {stocks.length} stocks
+              </div>
+            </div>
             <StockTable
               stocks={filteredStocks}
               onSelect={onSelectTicker}
               selectedTickers={selectedTickers}
               onToggle={toggleTicker}
+              sortConfig={sortConfig}
+              onSort={handleSort}
             />
           </>
         )}

@@ -178,6 +178,7 @@ export default function Dashboard() {
 
   const prevPriceRef = useRef(null)
   const failCount = useRef(0)
+  const currentTickerRef = useRef('')
 
   useEffect(() => {
     let cancelled = false
@@ -236,12 +237,14 @@ export default function Dashboard() {
   const fetchLiveData = useCallback(async () => {
     const symbol = ticker.trim().toUpperCase()
     if (!symbol) return
+    const requestedTicker = symbol
 
     try {
       const res = await fetch(`${API_BASE}/live/${symbol}`, {
         signal: AbortSignal.timeout(15000)
       })
       const data = await res.json()
+      if (currentTickerRef.current !== requestedTicker) return
       if (!res.ok) throw new Error(data.detail || 'Live fetch failed')
 
       const price = data.price ?? data.entry_price
@@ -253,19 +256,21 @@ export default function Dashboard() {
       prevPriceRef.current = price
 
       setResult(data)
+      setLoading(false)
       setLastUpdated(new Date().toLocaleTimeString())
       setSecondsAgo(0)
       setSignalPulse(true)
       setTimeout(() => setSignalPulse(false), 600)
       setError(null)
     } catch (err) {
-      // If timeout or network error during scanner load,
-      // keep showing last result — do not blank the screen
+      setLoading(false)
       if (err.name === 'TimeoutError' ||
           err.name === 'AbortError') {
-        // silent retry — keep existing result visible
+        // silent retry on interval - don't clear result
+        // but only if we already have a result for current ticker
         return
       }
+      setResult(null)
       setError(err.message || 'Could not fetch live data.')
     }
   }, [ticker])
@@ -310,16 +315,18 @@ export default function Dashboard() {
   }
 
   const handleScannerSelect = (symbol) => {
-    setShowScanner(false)
+    currentTickerRef.current = symbol.trim().toUpperCase()
+    setResult(null)
+    setLoading(true)
     setTicker(symbol)
+    setShowScanner(false)
     setLiveMode(true)
     setLiveActive(true)
-    setResult(null)
     prevPriceRef.current = null
     setError(null)
   }
 
-  const showResults = Boolean(result) && (!loading || liveActive)
+  const showResults = Boolean(result) && !loading
   const showUpload = !liveMode
 
   return (

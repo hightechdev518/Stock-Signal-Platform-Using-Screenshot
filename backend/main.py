@@ -221,6 +221,23 @@ async def scanner_all():
         raise HTTPException(500, str(e))
 
 
+@app.get("/scanner/status")
+def scanner_status():
+    from scanner import (
+        _scanner_cache,
+        _scanner_cache_lock,
+        ALL_TICKERS,
+        _scan_complete
+    )
+    with _scanner_cache_lock:
+        cached = len(_scanner_cache)
+    return {
+        "cached": cached,
+        "total": len(ALL_TICKERS),
+        "scanning": not _scan_complete
+    }
+
+
 @app.post("/analyze")
 async def analyze_screenshot(file: UploadFile = File(...)):
     """
